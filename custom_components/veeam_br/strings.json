@@ -9,7 +9,8 @@
           "port": "Port",
           "username": "Username",
           "password": "Password",
-          "verify_ssl": "Verify SSL Certificate"
+          "verify_ssl": "Verify SSL Certificate",
+          "api_version": "API Version"
         }
       }
     },
@@ -20,6 +21,22 @@
     },
     "abort": {
       "already_configured": "This Veeam server is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Veeam Backup & Replication Options",
+        "description": "Configure Veeam Backup & Replication integration settings.",
+        "data": {
+          "api_version": "API Version"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Veeam server",
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error occurred"
     }
   }
 }
