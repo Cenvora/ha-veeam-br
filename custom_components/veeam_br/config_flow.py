@@ -29,57 +29,27 @@ _LOGGER = logging.getLogger(__name__)
 def _get_api_version_selector_config(
     preferred_version: str | None = None,
 ) -> tuple[list[str], str]:
-    """Get API version options and default for selector.
-
-    Ensures the default value is always in the options list.
-
-    Args:
-        preferred_version: The preferred API version to use as default.
-                          If None, uses DEFAULT_API_VERSION.
-
-    Returns:
-        A tuple of (options_list, default_value) where default_value
-        is guaranteed to be in options_list.
-    """
+    """Get API version options and default for selector."""
     api_version_options = list(API_VERSIONS.keys())
 
-    # Determine which version to use as default
     if preferred_version and preferred_version in api_version_options:
         return api_version_options, preferred_version
 
     if DEFAULT_API_VERSION in api_version_options:
-        if preferred_version and preferred_version != DEFAULT_API_VERSION:
-            _LOGGER.warning(
-                "Preferred API version %s not available, using default %s",
-                preferred_version,
-                DEFAULT_API_VERSION,
-            )
         return api_version_options, DEFAULT_API_VERSION
 
     if api_version_options:
-        api_version_default = api_version_options[0]
-        _LOGGER.warning(
-            "Default API version %s not available, using %s",
-            DEFAULT_API_VERSION,
-            api_version_default,
-        )
-        return api_version_options, api_version_default
+        return api_version_options, api_version_options[0]
 
-    # Fallback if API_VERSIONS is somehow empty (should never happen)
     _LOGGER.error("No API versions available, using fallback")
     return [DEFAULT_API_VERSION], DEFAULT_API_VERSION
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
-
-    Data has the keys from DATA_SCHEMA with values provided by the user.
-    """
-    # Get API version from data or use default
+    """Validate the user input allows us to connect."""
     api_version = data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
     api_module = API_VERSIONS.get(api_version, "v1_3_rev1")
 
-    # Import the veeam_br library dynamically based on API version
     try:
         client_module = importlib.import_module(f"veeam_br.{api_module}")
         create_token_module = importlib.import_module(
@@ -95,35 +65,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         ELoginGrantType = models_module.ELoginGrantType
         TokenLoginSpec = token_spec_module.TokenLoginSpec
     except ImportError as err:
-        # Provide more specific feedback about what went wrong during import.
-        error_message: str
-        if isinstance(err, ModuleNotFoundError):
-            missing_name = getattr(err, "name", "") or ""
-            if missing_name == "veeam_br":
-                error_message = "veeam_br library is not installed"
-            elif missing_name.startswith(f"veeam_br.{api_module}"):
-                error_message = f"API version {api_version} is not supported or not available"
-            else:
-                error_message = (
-                    "A required veeam_br module could not be found " "(see logs for details)"
-                )
-        else:
-            error_message = (
-                "An unexpected import error occurred while loading the veeam_br library "
-                "(see logs for details)"
-            )
+        _LOGGER.error("Error importing veeam_br: %s", err)
+        raise ConnectionError("Failed to import veeam_br modules") from err
 
-        _LOGGER.error(
-            "Error importing veeam_br for API version %s: %s (%s)",
-            api_version,
-            error_message,
-            err,
-        )
-        raise ConnectionError(error_message) from err
-    # Construct base URL
     base_url = f"https://{data[CONF_HOST]}:{data[CONF_PORT]}"
 
-    # Test connection by attempting to authenticate
     try:
 
         def _test_connection():
@@ -141,19 +87,11 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         token_result = await hass.async_add_executor_job(_test_connection)
 
         if not token_result or not token_result.access_token:
-            raise PermissionError("Authentication failed - no access token received")
+            raise PermissionError("Authentication failed")
 
-    except PermissionError as err:
-        _LOGGER.error("Authentication failed: %s", err)
-        raise
-    except ConnectionError as err:
-        _LOGGER.error("Failed to connect to Veeam server: %s", err)
-        raise
     except Exception as err:
-        _LOGGER.error("Unexpected error during connection test: %s", err)
         raise ConnectionError(f"Failed to connect: {err}") from err
 
-    # Return info that you want to store in the config entry.
     return {"title": f"Veeam BR ({data[CONF_HOST]})"}
 
 
@@ -164,16 +102,13 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> VeeamBROptionsFlow:
-        """Get the options flow for this handler."""
-        return VeeamBROptionsFlow(config_entry)
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "VeeamBROptionsFlow":
+        return VeeamBROptionsFlow()
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Handle the initial step."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Check if already configured
             await self.async_set_unique_id(f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}")
             self._abort_if_unique_id_configured()
 
@@ -183,16 +118,14 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except ConnectionError:
                 errors["base"] = "cannot_connect"
-            except Exception:  # pylint: disable=broad-except
+            except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(title=info["title"], data=user_input)
 
-        # Get API version options and default for selector
         api_version_options, api_version_default = _get_api_version_selector_config()
 
-        # Show the form
         data_schema = vol.Schema(
             {
                 vol.Required(CONF_HOST): cv.string,
@@ -217,17 +150,10 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class VeeamBROptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for Veeam Backup & Replication integration."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize options flow."""
-        self.config_entry = config_entry
-
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Manage the options."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate the new API version by testing if it can connect
-            # Create a test data dict with the new API version and existing config
             test_data = {**self.config_entry.data, CONF_API_VERSION: user_input[CONF_API_VERSION]}
 
             try:
@@ -236,27 +162,30 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
                 errors["base"] = "invalid_auth"
             except ConnectionError:
                 errors["base"] = "cannot_connect"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception validating new API version")
+            except Exception:
+                _LOGGER.exception("Unexpected exception validating options")
                 errors["base"] = "unknown"
             else:
-                # Only update if validation passed - store in options
                 return self.async_create_entry(title="", data=user_input)
 
-        # Get current API version from config entry options or data
+        api_version_options = list(API_VERSIONS.keys())
+
         current_api_version = self.config_entry.options.get(
-            CONF_API_VERSION, self.config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
+            CONF_API_VERSION,
+            self.config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
         )
 
-        # Get API version options and default for selector
-        api_version_options, api_version_default = _get_api_version_selector_config(
-            preferred_version=current_api_version
-        )
+        if current_api_version not in api_version_options:
+            _LOGGER.warning(
+                "Stored API version %s is invalid, falling back to default",
+                current_api_version,
+            )
+            current_api_version = DEFAULT_API_VERSION
 
         options_schema = vol.Schema(
             {
                 vol.Required(
-                    CONF_API_VERSION, default=api_version_default
+                    CONF_API_VERSION, default=current_api_version
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
                         options=api_version_options,
