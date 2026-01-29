@@ -50,7 +50,6 @@ async def async_setup_entry(
                 [
                     VeeamJobStatusSensor(coordinator, entry, job),
                     VeeamJobTypeSensor(coordinator, entry, job),
-                    VeeamJobLastResultSensor(coordinator, entry, job),
                     VeeamJobLastRunSensor(coordinator, entry, job),
                     VeeamJobNextRunSensor(coordinator, entry, job),
                 ]
@@ -68,6 +67,9 @@ async def async_setup_entry(
                 [
                     VeeamRepositoryTypeSensor(coordinator, entry, repository),
                     VeeamRepositoryDescriptionSensor(coordinator, entry, repository),
+                    VeeamRepositoryCapacitySensor(coordinator, entry, repository),
+                    VeeamRepositoryFreeSpaceSensor(coordinator, entry, repository),
+                    VeeamRepositoryUsedSpaceSensor(coordinator, entry, repository),
                 ]
             )
             added_repository_ids.add(repo_id)
@@ -85,6 +87,8 @@ async def async_setup_entry(
                     VeeamServerNameSensor(coordinator, entry),
                     VeeamServerPlatformSensor(coordinator, entry),
                     VeeamServerDatabaseVendorSensor(coordinator, entry),
+                    VeeamServerSQLEditionSensor(coordinator, entry),
+                    VeeamServerSQLVersionSensor(coordinator, entry),
                 ]
             )
             server_added = True
@@ -99,6 +103,9 @@ async def async_setup_entry(
                     VeeamLicenseExpirationSensor(coordinator, entry),
                     VeeamLicenseSupportExpirationSensor(coordinator, entry),
                     VeeamLicenseLicensedToSensor(coordinator, entry),
+                    VeeamLicenseSupportIDSensor(coordinator, entry),
+                    VeeamLicenseAutoUpdateSensor(coordinator, entry),
+                    VeeamLicenseCloudConnectSensor(coordinator, entry),
                 ]
             )
             license_added = True
@@ -197,31 +204,6 @@ class VeeamJobTypeSensor(VeeamJobBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:file-tree"
-
-
-class VeeamJobLastResultSensor(VeeamJobBaseSensor):
-    """Sensor for Veeam Job Last Result."""
-
-    def __init__(self, coordinator, config_entry, job_data):
-        super().__init__(coordinator, config_entry, job_data)
-        self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_last_result"
-        self._attr_name = "Last Result"
-
-    @property
-    def native_value(self) -> str | None:
-        job = self._job()
-        return job.get("last_result") if job else None
-
-    @property
-    def icon(self) -> str:
-        result = self.native_value
-        if result and result.lower() == "success":
-            return "mdi:check-circle"
-        if result and result.lower() == "warning":
-            return "mdi:alert"
-        if result and result.lower() == "failed":
-            return "mdi:close-circle"
-        return "mdi:help-circle"
 
 
 class VeeamJobLastRunSensor(VeeamJobBaseSensor):
@@ -364,6 +346,44 @@ class VeeamServerDatabaseVendorSensor(VeeamServerBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:database"
+
+
+class VeeamServerSQLEditionSensor(VeeamServerBaseSensor):
+    """Sensor for Veeam Server SQL Edition."""
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_server_sql_edition"
+        self._attr_name = "SQL Server Edition"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        server_info = self._server_info()
+        return server_info.get("sql_server_edition") if server_info else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:database-settings"
+
+
+class VeeamServerSQLVersionSensor(VeeamServerBaseSensor):
+    """Sensor for Veeam Server SQL Version."""
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_server_sql_version"
+        self._attr_name = "SQL Server Version"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        server_info = self._server_info()
+        return server_info.get("sql_server_version") if server_info else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:database-check"
 
 
 # ===========================
@@ -510,6 +530,69 @@ class VeeamLicenseLicensedToSensor(VeeamLicenseBaseSensor):
         return "mdi:account"
 
 
+class VeeamLicenseSupportIDSensor(VeeamLicenseBaseSensor):
+    """Sensor for Veeam License Support ID."""
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_license_support_id"
+        self._attr_name = "Support ID"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        license_info = self._license_info()
+        return license_info.get("support_id") if license_info else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:identifier"
+
+
+class VeeamLicenseAutoUpdateSensor(VeeamLicenseBaseSensor):
+    """Sensor for Veeam License Auto Update."""
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_license_auto_update"
+        self._attr_name = "Auto Update Enabled"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        license_info = self._license_info()
+        if not license_info:
+            return None
+        enabled = license_info.get("auto_update_enabled", False)
+        return "Yes" if enabled else "No"
+
+    @property
+    def icon(self) -> str:
+        license_info = self._license_info()
+        if license_info and license_info.get("auto_update_enabled", False):
+            return "mdi:update"
+        return "mdi:update-off"
+
+
+class VeeamLicenseCloudConnectSensor(VeeamLicenseBaseSensor):
+    """Sensor for Veeam License Cloud Connect."""
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_license_cloud_connect"
+        self._attr_name = "Cloud Connect"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        license_info = self._license_info()
+        return license_info.get("cloud_connect") if license_info else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:cloud-sync"
+
+
 # ===========================
 # REPOSITORY SENSORS (device per repository)
 # ===========================
@@ -592,3 +675,102 @@ class VeeamRepositoryDescriptionSensor(VeeamRepositoryBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:text"
+
+
+class VeeamRepositoryCapacitySensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Total Capacity."""
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_capacity"
+        self._attr_name = "Capacity"
+        self._attr_entity_category = None
+        self._attr_native_unit_of_measurement = "GB"
+        self._attr_device_class = SensorDeviceClass.DATA_SIZE
+        self._attr_suggested_display_precision = 2
+
+    @property
+    def native_value(self) -> float | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        # Try to get capacity from additional_properties or direct fields
+        capacity = repo.get("capacity") or repo.get("totalSpace")
+        if capacity is not None:
+            # Convert bytes to GB if needed
+            if isinstance(capacity, (int, float)):
+                # Assume it's in bytes, convert to GB
+                return round(capacity / (1024**3), 2)
+        return None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:harddisk"
+
+
+class VeeamRepositoryFreeSpaceSensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Free Space."""
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_free_space"
+        self._attr_name = "Free Space"
+        self._attr_entity_category = None
+        self._attr_native_unit_of_measurement = "GB"
+        self._attr_device_class = SensorDeviceClass.DATA_SIZE
+        self._attr_suggested_display_precision = 2
+
+    @property
+    def native_value(self) -> float | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        # Try to get free space from additional_properties or direct fields
+        free_space = repo.get("freeSpace") or repo.get("free_space")
+        if free_space is not None:
+            # Convert bytes to GB if needed
+            if isinstance(free_space, (int, float)):
+                # Assume it's in bytes, convert to GB
+                return round(free_space / (1024**3), 2)
+        return None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:database-check"
+
+
+class VeeamRepositoryUsedSpaceSensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Used Space."""
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_used_space"
+        self._attr_name = "Used Space"
+        self._attr_entity_category = None
+        self._attr_native_unit_of_measurement = "GB"
+        self._attr_device_class = SensorDeviceClass.DATA_SIZE
+        self._attr_suggested_display_precision = 2
+
+    @property
+    def native_value(self) -> float | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        # Try to get used space from additional_properties or direct fields
+        used_space = repo.get("usedSpace") or repo.get("used_space")
+        if used_space is not None:
+            # Convert bytes to GB if needed
+            if isinstance(used_space, (int, float)):
+                # Assume it's in bytes, convert to GB
+                return round(used_space / (1024**3), 2)
+        # Try to calculate from capacity - free
+        capacity = repo.get("capacity") or repo.get("totalSpace")
+        free_space = repo.get("freeSpace") or repo.get("free_space")
+        if capacity is not None and free_space is not None:
+            if isinstance(capacity, (int, float)) and isinstance(free_space, (int, float)):
+                return round((capacity - free_space) / (1024**3), 2)
+        return None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:database-alert"
