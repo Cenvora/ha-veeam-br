@@ -239,33 +239,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     repositories_result = repositories_response.parsed
                     repositories_data = repositories_result.data if repositories_result else []
 
+                    # Helper to safely get UUID as string
+                    def get_uuid_value(uuid_val):
+                        """Extract UUID value."""
+                        if uuid_val is None or uuid_val is UNSET:
+                            return None
+                        return str(uuid_val)
+
                     for repo in repositories_data:
                         try:
-                            # Helper to get enum value
-                            def get_repo_enum_value(enum_val, default="unknown"):
-                                """Extract enum value, handling both enum types and UNSET."""
-                                if enum_val is None or enum_val is UNSET:
-                                    return default
-                                if hasattr(enum_val, "value"):
-                                    return enum_val.value
-                                return str(enum_val)
-
-                            # Helper to safely get UUID as string
-                            def get_uuid_value(uuid_val):
-                                """Extract UUID value."""
-                                if uuid_val is None or uuid_val is UNSET:
-                                    return None
-                                return str(uuid_val)
-
                             repo_dict = {
                                 "id": get_uuid_value(repo.id),
                                 "name": repo.name or "Unknown",
                                 "description": repo.description or "",
-                                "type": get_repo_enum_value(repo.type_),
+                                "type": get_enum_value(repo.type_),
                                 "unique_id": (
-                                    repo.unique_id
-                                    if not isinstance(repo.unique_id, type(UNSET))
-                                    else None
+                                    repo.unique_id if repo.unique_id is not UNSET else None
                                 ),
                             }
 

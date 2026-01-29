@@ -252,7 +252,7 @@ class VeeamRepositorySensor(CoordinatorEntity, SensorEntity):
         if not repo:
             return "mdi:database"
 
-        repo_type = repo.get("type", "").lower()
+        repo_type = (repo.get("type") or "").lower()
         if "linux" in repo_type:
             return "mdi:linux"
         if "win" in repo_type:
