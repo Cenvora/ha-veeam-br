@@ -25,10 +25,12 @@ async def async_setup_entry(
 
     added_job_ids: set[str] = set()
     server_added = False
+    license_added = False
 
     @callback
     def _sync_entities() -> None:
         nonlocal server_added
+        nonlocal license_added
 
         if not coordinator.data:
             return
@@ -48,6 +50,11 @@ async def async_setup_entry(
         if not server_added and coordinator.data.get("server_info"):
             new_entities.append(VeeamServerInfoSensor(coordinator, entry))
             server_added = True
+
+        # ---- LICENSE SENSOR (once) ----
+        if not license_added and coordinator.data.get("license_info"):
+            new_entities.append(VeeamLicenseSensor(coordinator, entry))
+            license_added = True
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam sensors", len(new_entities))
@@ -133,6 +140,50 @@ class VeeamServerInfoSensor(CoordinatorEntity, SensorEntity):
     @property
     def icon(self) -> str:
         return "mdi:server"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._config_entry.entry_id)},
+            "name": f"Veeam B&R ({self._config_entry.data.get('host')})",
+            "manufacturer": "Veeam",
+            "model": "Backup & Replication",
+        }
+
+
+class VeeamLicenseSensor(CoordinatorEntity, SensorEntity):
+    """Representation of the Veeam Backup License sensor."""
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._attr_unique_id = f"{config_entry.entry_id}_license"
+        self._attr_name = "Veeam License"
+
+    @property
+    def native_value(self) -> str | None:
+        if not self.coordinator.data:
+            return None
+        license_info = self.coordinator.data.get("license_info")
+        if not license_info:
+            return None
+        return license_info.get("status")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        if not self.coordinator.data:
+            return {}
+        license_info = self.coordinator.data.get("license_info")
+        return license_info if license_info else {}
+
+    @property
+    def icon(self) -> str:
+        state = self.native_value
+        if state and state.lower() == "valid":
+            return "mdi:license"
+        if state and state.lower() == "expired":
+            return "mdi:license-off"
+        return "mdi:license"
 
     @property
     def device_info(self):

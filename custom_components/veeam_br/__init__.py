@@ -40,6 +40,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         get_server_info = importlib.import_module(
             f"veeam_br.{api_module}.api.service.get_server_info"
         )
+        get_installed_license = importlib.import_module(
+            f"veeam_br.{api_module}.api.license_.get_installed_license"
+        )
     except ImportError as err:
         _LOGGER.error("Failed to import veeam_br API: %s", err)
         return False
@@ -74,6 +77,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             def _get_server_info():
                 return get_server_info.sync_detailed(
+                    client=client,
+                    x_api_version=api_version,
+                )
+
+            def _get_license():
+                return get_installed_license.sync_detailed(
                     client=client,
                     x_api_version=api_version,
                 )
@@ -132,9 +141,65 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:
                 _LOGGER.warning("Failed to fetch server info: %s", err)
 
+            # Fetch license information
+            license_info = None
+            try:
+                license_response = await hass.async_add_executor_job(_get_license)
+                if license_response.status_code == 200 and license_response.parsed:
+                    license_data = license_response.parsed
+
+                    # Helper function to safely get enum value
+                    def get_enum_value(obj, attr_name, default="Unknown"):
+                        """Extract enum value, handling both enum types and UNSET."""
+                        attr = getattr(obj, attr_name, None)
+                        if attr is None:
+                            return default
+                        # Check if it's UNSET (from veeam-br library)
+                        if hasattr(attr, "__class__") and attr.__class__.__name__ == "Unset":
+                            return default
+                        # Try to get enum value
+                        if hasattr(attr, "value"):
+                            return attr.value
+                        return str(attr)
+
+                    # Helper function to safely get datetime
+                    def get_datetime_value(obj, attr_name):
+                        """Extract datetime value, handling UNSET."""
+                        attr = getattr(obj, attr_name, None)
+                        if attr is None:
+                            return None
+                        # Check if it's UNSET
+                        if hasattr(attr, "__class__") and attr.__class__.__name__ == "Unset":
+                            return None
+                        return attr
+
+                    license_info = {
+                        "status": get_enum_value(license_data, "status"),
+                        "edition": get_enum_value(license_data, "edition"),
+                        "type": get_enum_value(
+                            license_data, "type_"
+                        ),  # Note: type_ with underscore
+                        "expiration_date": get_datetime_value(license_data, "expiration_date"),
+                        "support_expiration_date": get_datetime_value(
+                            license_data, "support_expiration_date"
+                        ),
+                        "support_id": getattr(license_data, "support_id", "Unknown"),
+                        "auto_update_enabled": getattr(license_data, "auto_update_enabled", False),
+                        "licensed_to": getattr(license_data, "licensed_to", "Unknown"),
+                        "cloud_connect": get_enum_value(license_data, "cloud_connect"),
+                        "free_agent_instance_consumption_enabled": getattr(
+                            license_data, "free_agent_instance_consumption_enabled", False
+                        ),
+                    }
+            except (AttributeError, KeyError, TypeError) as err:
+                _LOGGER.warning("Failed to parse license info: %s", err)
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch license info: %s", err)
+
             return {
                 "jobs": jobs_list,
                 "server_info": server_info,
+                "license_info": license_info,
             }
 
         except Exception as err:
