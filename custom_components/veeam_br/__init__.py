@@ -106,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             try:
                 response_data = response.content.decode("utf-8")
                 import json
+
                 data = json.loads(response_data)
             except (ValueError, json.JSONDecodeError) as err:
                 raise UpdateFailed(f"Failed to parse API response: {err}") from err
