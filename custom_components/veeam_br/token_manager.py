@@ -104,13 +104,17 @@ class VeeamTokenManager:
         """
         try:
             api_module = API_VERSIONS.get(self._api_version, "v1_3_rev1")
-            
+
             # Dynamic imports based on API version
             client_module = importlib.import_module(f"veeam_br.{api_module}")
             login_module = importlib.import_module(f"veeam_br.{api_module}.api.login")
-            models_module = importlib.import_module(f"veeam_br.{api_module}.models.e_login_grant_type")
-            token_spec_module = importlib.import_module(f"veeam_br.{api_module}.models.token_login_spec")
-            
+            models_module = importlib.import_module(
+                f"veeam_br.{api_module}.models.e_login_grant_type"
+            )
+            token_spec_module = importlib.import_module(
+                f"veeam_br.{api_module}.models.token_login_spec"
+            )
+
             Client = client_module.Client
             create_token = login_module.create_token
             ELoginGrantType = models_module.ELoginGrantType
@@ -159,13 +163,17 @@ class VeeamTokenManager:
         """
         try:
             api_module = API_VERSIONS.get(self._api_version, "v1_3_rev1")
-            
+
             # Dynamic imports based on API version
             client_module = importlib.import_module(f"veeam_br.{api_module}")
             login_module = importlib.import_module(f"veeam_br.{api_module}.api.login")
-            models_module = importlib.import_module(f"veeam_br.{api_module}.models.e_login_grant_type")
-            token_spec_module = importlib.import_module(f"veeam_br.{api_module}.models.token_login_spec")
-            
+            models_module = importlib.import_module(
+                f"veeam_br.{api_module}.models.e_login_grant_type"
+            )
+            token_spec_module = importlib.import_module(
+                f"veeam_br.{api_module}.models.token_login_spec"
+            )
+
             Client = client_module.Client
             create_token = login_module.create_token
             ELoginGrantType = models_module.ELoginGrantType

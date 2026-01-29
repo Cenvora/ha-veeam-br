@@ -32,7 +32,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Get API version from config or use default
     api_version = entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
     api_module = API_VERSIONS.get(api_version, "v1_3_rev1")
-    
+
     # Import the veeam_br library dynamically based on API version
     try:
         jobs_module = importlib.import_module(f"veeam_br.{api_module}.api.jobs")

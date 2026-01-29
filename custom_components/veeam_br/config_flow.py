@@ -34,21 +34,25 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     # Get API version from data or use default
     api_version = data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
     api_module = API_VERSIONS.get(api_version, "v1_3_rev1")
-    
+
     # Import the veeam_br library dynamically based on API version
     try:
         client_module = importlib.import_module(f"veeam_br.{api_module}")
         login_module = importlib.import_module(f"veeam_br.{api_module}.api.login")
         models_module = importlib.import_module(f"veeam_br.{api_module}.models.e_login_grant_type")
-        token_spec_module = importlib.import_module(f"veeam_br.{api_module}.models.token_login_spec")
-        
+        token_spec_module = importlib.import_module(
+            f"veeam_br.{api_module}.models.token_login_spec"
+        )
+
         Client = client_module.Client
         create_token = login_module.create_token
         ELoginGrantType = models_module.ELoginGrantType
         TokenLoginSpec = token_spec_module.TokenLoginSpec
     except ImportError as err:
         _LOGGER.error("Failed to import veeam_br library for API version %s: %s", api_version, err)
-        raise ConnectionError(f"veeam_br library not installed or API version {api_version} not supported") from err
+        raise ConnectionError(
+            f"veeam_br library not installed or API version {api_version} not supported"
+        ) from err
 
     # Construct base URL
     base_url = f"https://{data[CONF_HOST]}:{data[CONF_PORT]}"
@@ -127,7 +131,9 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_USERNAME): cv.string,
                 vol.Required(CONF_PASSWORD): cv.string,
                 vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): cv.boolean,
-                vol.Optional(CONF_API_VERSION, default=DEFAULT_API_VERSION): vol.In(list(API_VERSIONS.keys())),
+                vol.Optional(CONF_API_VERSION, default=DEFAULT_API_VERSION): vol.In(
+                    list(API_VERSIONS.keys())
+                ),
             }
         )
 
@@ -156,7 +162,9 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
 
         options_schema = vol.Schema(
             {
-                vol.Required(CONF_API_VERSION, default=current_api_version): vol.In(list(API_VERSIONS.keys())),
+                vol.Required(CONF_API_VERSION, default=current_api_version): vol.In(
+                    list(API_VERSIONS.keys())
+                ),
             }
         )
 
