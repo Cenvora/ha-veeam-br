@@ -1,8 +1,18 @@
-# Veeam Backup & Replication Integration for Home Assistant
+<h1 align="center">
+<br>
+<img src="https://raw.githubusercontent.com/Cenvora/ha-veeam-br/main/media/Veeam_logo_2024_RGB_main_20.png"
+     alt="Veeam Logo"
+     height="100">
+<br>
+<br>
+Veeam Backup & Replication Integration for Home Assistant
+</h1>
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 
-A Home Assistant custom integration that monitors Veeam Backup & Replication servers. This integration provides real-time monitoring of backup jobs and their status directly in Home Assistant.
+A Home Assistant custom integration that monitors Veeam Backup & Replication servers. This integration provides real-time monitoring of backup jobs and their status directly in Home Assistant. 
+
+This project is an independent, open source project. It is not affiliated with, endorsed by, or sponsored by Veeam Software.
 
 ## Features
 
