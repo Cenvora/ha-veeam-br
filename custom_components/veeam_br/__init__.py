@@ -45,6 +45,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         get_installed_license = importlib.import_module(
             f"veeam_br.{api_module}.api.license_.get_installed_license"
         )
+        get_all_repositories = importlib.import_module(
+            f"veeam_br.{api_module}.api.repositories.get_all_repositories"
+        )
         # Import UNSET type for proper type checking
         types_module = importlib.import_module(f"veeam_br.{api_module}.types")
         UNSET = types_module.UNSET
@@ -88,6 +91,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             def _get_license():
                 return get_installed_license.sync_detailed(
+                    client=client,
+                    x_api_version=api_version,
+                )
+
+            def _get_repositories():
+                return get_all_repositories.sync_detailed(
                     client=client,
                     x_api_version=api_version,
                 )
@@ -222,10 +231,62 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:
                 _LOGGER.warning("Failed to fetch license info: %s", err)
 
+            # Fetch repositories information
+            repositories_list = []
+            try:
+                repositories_response = await hass.async_add_executor_job(_get_repositories)
+                if repositories_response.status_code == 200 and repositories_response.parsed:
+                    repositories_result = repositories_response.parsed
+                    repositories_data = repositories_result.data if repositories_result else []
+
+                    for repo in repositories_data:
+                        try:
+                            # Helper to get enum value
+                            def get_repo_enum_value(enum_val, default="unknown"):
+                                """Extract enum value, handling both enum types and UNSET."""
+                                if enum_val is None or enum_val is UNSET:
+                                    return default
+                                if hasattr(enum_val, "value"):
+                                    return enum_val.value
+                                return str(enum_val)
+
+                            # Helper to safely get UUID as string
+                            def get_uuid_value(uuid_val):
+                                """Extract UUID value."""
+                                if uuid_val is None or uuid_val is UNSET:
+                                    return None
+                                return str(uuid_val)
+
+                            repo_dict = {
+                                "id": get_uuid_value(repo.id),
+                                "name": repo.name or "Unknown",
+                                "description": repo.description or "",
+                                "type": get_repo_enum_value(repo.type_),
+                                "unique_id": (
+                                    repo.unique_id
+                                    if not isinstance(repo.unique_id, type(UNSET))
+                                    else None
+                                ),
+                            }
+
+                            # Add all additional properties from the API response
+                            if hasattr(repo, "additional_properties"):
+                                repo_dict.update(repo.additional_properties)
+
+                            repositories_list.append(repo_dict)
+                        except (AttributeError, TypeError) as err:
+                            _LOGGER.warning("Failed to parse repository: %s", err)
+                            continue
+            except (AttributeError, KeyError, TypeError) as err:
+                _LOGGER.warning("Failed to parse repositories: %s", err)
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch repositories: %s", err)
+
             return {
                 "jobs": jobs_list,
                 "server_info": server_info,
                 "license_info": license_info,
+                "repositories": repositories_list,
             }
 
         except Exception as err:

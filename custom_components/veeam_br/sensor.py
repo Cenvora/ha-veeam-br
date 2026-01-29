@@ -24,6 +24,7 @@ async def async_setup_entry(
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
     added_job_ids: set[str] = set()
+    added_repository_ids: set[str] = set()
     server_added = False
     license_added = False
 
@@ -45,6 +46,15 @@ async def async_setup_entry(
 
             new_entities.append(VeeamJobSensor(coordinator, entry, job))
             added_job_ids.add(job_id)
+
+        # ---- REPOSITORY SENSORS (dynamic) ----
+        for repository in coordinator.data.get("repositories", []):
+            repo_id = repository.get("id")
+            if not repo_id or repo_id in added_repository_ids:
+                continue
+
+            new_entities.append(VeeamRepositorySensor(coordinator, entry, repository))
+            added_repository_ids.add(repo_id)
 
         # ---- SERVER SENSOR (once) ----
         if not server_added and coordinator.data.get("server_info"):
@@ -193,6 +203,65 @@ class VeeamLicenseSensor(CoordinatorEntity, SensorEntity):
         if state and state.lower() == "expired":
             return "mdi:license-off"
         return "mdi:license"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._config_entry.entry_id)},
+            "name": f"Veeam B&R ({self._config_entry.data.get('host')})",
+            "manufacturer": "Veeam",
+            "model": "Backup & Replication",
+        }
+
+
+class VeeamRepositorySensor(CoordinatorEntity, SensorEntity):
+    """Representation of a Veeam Backup Repository sensor."""
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._repo_id = repository_data.get("id")
+        self._repo_name = repository_data.get("name", "Unknown Repository")
+
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}"
+        self._attr_name = f"Repository - {self._repo_name}"
+
+    def _repository(self) -> dict[str, Any] | None:
+        if not self.coordinator.data:
+            return None
+        for repo in self.coordinator.data.get("repositories", []):
+            if repo.get("id") == self._repo_id:
+                return repo
+        return None
+
+    @property
+    def native_value(self) -> str | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        # Use repository type as the main state
+        return repo.get("type", "unknown")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self._repository() or {}
+
+    @property
+    def icon(self) -> str:
+        repo = self._repository()
+        if not repo:
+            return "mdi:database"
+
+        repo_type = repo.get("type", "").lower()
+        if "linux" in repo_type:
+            return "mdi:linux"
+        if "win" in repo_type:
+            return "mdi:microsoft-windows"
+        if "cloud" in repo_type or "azure" in repo_type or "aws" in repo_type:
+            return "mdi:cloud"
+        if "scale" in repo_type or "sobr" in repo_type:
+            return "mdi:database-cluster"
+        return "mdi:database"
 
     @property
     def device_info(self):
