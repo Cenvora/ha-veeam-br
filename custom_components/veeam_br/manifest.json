@@ -1,0 +1,11 @@
+{
+  "domain": "veeam_br",
+  "name": "Veeam Backup & Replication",
+  "codeowners": ["@Cenvora"],
+  "config_flow": true,
+  "documentation": "https://github.com/Cenvora/ha-veeam-br",
+  "issue_tracker": "https://github.com/Cenvora/ha-veeam-br/issues",
+  "requirements": ["veeam-br>=0.1.0"],
+  "version": "1.0.0",
+  "iot_class": "cloud_polling"
+}

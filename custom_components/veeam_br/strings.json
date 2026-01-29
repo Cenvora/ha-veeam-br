@@ -1,0 +1,25 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Veeam Backup & Replication",
+        "description": "Enter your Veeam Backup & Replication server details.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL Certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Veeam server",
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This Veeam server is already configured"
+    }
+  }
+}
