@@ -6,6 +6,6 @@
   "documentation": "https://github.com/Cenvora/ha-veeam-br",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Cenvora/ha-veeam-br/issues",
-  "requirements": ["veeam-br>=0.1.0,<1.0.0"],
-  "version": "0.1.0"
+  "requirements": ["veeam-br>=0.1.1,<1.0.0"],
+  "version": "0.1.1"
 }
