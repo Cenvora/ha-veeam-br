@@ -107,7 +107,9 @@ class VeeamTokenManager:
 
             # Dynamic imports based on API version
             client_module = importlib.import_module(f"veeam_br.{api_module}")
-            login_module = importlib.import_module(f"veeam_br.{api_module}.api.login")
+            create_token_module = importlib.import_module(
+                f"veeam_br.{api_module}.api.login.create_token"
+            )
             models_module = importlib.import_module(
                 f"veeam_br.{api_module}.models.e_login_grant_type"
             )
@@ -116,7 +118,7 @@ class VeeamTokenManager:
             )
 
             Client = client_module.Client
-            create_token = login_module.create_token
+            create_token = create_token_module
             ELoginGrantType = models_module.ELoginGrantType
             TokenLoginSpec = token_spec_module.TokenLoginSpec
 
@@ -166,7 +168,9 @@ class VeeamTokenManager:
 
             # Dynamic imports based on API version
             client_module = importlib.import_module(f"veeam_br.{api_module}")
-            login_module = importlib.import_module(f"veeam_br.{api_module}.api.login")
+            create_token_module = importlib.import_module(
+                f"veeam_br.{api_module}.api.login.create_token"
+            )
             models_module = importlib.import_module(
                 f"veeam_br.{api_module}.models.e_login_grant_type"
             )
@@ -175,7 +179,7 @@ class VeeamTokenManager:
             )
 
             Client = client_module.Client
-            create_token = login_module.create_token
+            create_token = create_token_module
             ELoginGrantType = models_module.ELoginGrantType
             TokenLoginSpec = token_spec_module.TokenLoginSpec
 

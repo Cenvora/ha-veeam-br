@@ -38,14 +38,16 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     # Import the veeam_br library dynamically based on API version
     try:
         client_module = importlib.import_module(f"veeam_br.{api_module}")
-        login_module = importlib.import_module(f"veeam_br.{api_module}.api.login")
+        create_token_module = importlib.import_module(
+            f"veeam_br.{api_module}.api.login.create_token"
+        )
         models_module = importlib.import_module(f"veeam_br.{api_module}.models.e_login_grant_type")
         token_spec_module = importlib.import_module(
             f"veeam_br.{api_module}.models.token_login_spec"
         )
 
         Client = client_module.Client
-        create_token = login_module.create_token
+        create_token = create_token_module
         ELoginGrantType = models_module.ELoginGrantType
         TokenLoginSpec = token_spec_module.TokenLoginSpec
     except ImportError as err:
