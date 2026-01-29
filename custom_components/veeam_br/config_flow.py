@@ -10,7 +10,7 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, selector
 import voluptuous as vol
 
 from .const import (
@@ -153,8 +153,13 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_USERNAME): cv.string,
                 vol.Required(CONF_PASSWORD): cv.string,
                 vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): cv.boolean,
-                vol.Optional(CONF_API_VERSION, default=DEFAULT_API_VERSION): vol.In(
-                    list(API_VERSIONS.keys())
+                vol.Optional(
+                    CONF_API_VERSION, default=DEFAULT_API_VERSION
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=list(API_VERSIONS.keys()),
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
                 ),
             }
         )
@@ -207,8 +212,13 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
 
         options_schema = vol.Schema(
             {
-                vol.Required(CONF_API_VERSION, default=current_api_version): vol.In(
-                    list(API_VERSIONS.keys())
+                vol.Required(
+                    CONF_API_VERSION, default=current_api_version
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=list(API_VERSIONS.keys()),
+                        mode=selector.SelectSelectorMode.DROPDOWN,
+                    )
                 ),
             }
         )
