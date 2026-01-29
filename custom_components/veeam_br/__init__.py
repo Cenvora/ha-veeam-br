@@ -183,9 +183,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if license_response.status_code == 200 and license_response.parsed:
                     license_data = license_response.parsed
 
-                    # Helper function to safely get enum value
-                    def get_enum_value(obj, attr_name, default="Unknown"):
-                        """Extract enum value, handling both enum types and UNSET."""
+                    # Helper function to safely get enum value from object attribute
+                    def get_license_enum_attr(obj, attr_name, default="Unknown"):
+                        """Extract enum value from object attribute, handling both enum types and UNSET."""
                         attr = getattr(obj, attr_name, None)
                         if attr is None:
                             return default
@@ -197,9 +197,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             return attr.value
                         return str(attr)
 
-                    # Helper function to safely get datetime
-                    def get_datetime_value(obj, attr_name):
-                        """Extract datetime value, handling UNSET."""
+                    # Helper function to safely get datetime from object attribute
+                    def get_license_datetime_attr(obj, attr_name):
+                        """Extract datetime value from object attribute, handling UNSET."""
                         attr = getattr(obj, attr_name, None)
                         if attr is None:
                             return None
@@ -209,19 +209,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         return attr
 
                     license_info = {
-                        "status": get_enum_value(license_data, "status"),
-                        "edition": get_enum_value(license_data, "edition"),
-                        "type": get_enum_value(
+                        "status": get_license_enum_attr(license_data, "status"),
+                        "edition": get_license_enum_attr(license_data, "edition"),
+                        "type": get_license_enum_attr(
                             license_data, "type_"
                         ),  # Note: type_ with underscore
-                        "expiration_date": get_datetime_value(license_data, "expiration_date"),
-                        "support_expiration_date": get_datetime_value(
+                        "expiration_date": get_license_datetime_attr(
+                            license_data, "expiration_date"
+                        ),
+                        "support_expiration_date": get_license_datetime_attr(
                             license_data, "support_expiration_date"
                         ),
                         "support_id": getattr(license_data, "support_id", "Unknown"),
                         "auto_update_enabled": getattr(license_data, "auto_update_enabled", False),
                         "licensed_to": getattr(license_data, "licensed_to", "Unknown"),
-                        "cloud_connect": get_enum_value(license_data, "cloud_connect"),
+                        "cloud_connect": get_license_enum_attr(license_data, "cloud_connect"),
                         "free_agent_instance_consumption_enabled": getattr(
                             license_data, "free_agent_instance_consumption_enabled", False
                         ),
