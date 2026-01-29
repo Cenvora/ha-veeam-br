@@ -1,4 +1,5 @@
 """Support for Veeam Backup & Replication sensors."""
+
 from __future__ import annotations
 
 import logging
@@ -41,23 +42,23 @@ class VeeamJobSensor(CoordinatorEntity, SensorEntity):
         self._config_entry = config_entry
         self._job_id = job_data.get("id", job_data.get("name"))
         self._job_name = job_data.get("name", "Unknown Job")
-        
+
         # Set unique ID
         self._attr_unique_id = f"{config_entry.entry_id}_{self._job_id}"
         self._attr_name = f"Veeam {self._job_name}"
-    
+
     def _find_job_data(self) -> dict[str, Any] | None:
         """Find the job data for this sensor from coordinator data."""
         if not self.coordinator.data:
             return None
-            
+
         for job in self.coordinator.data:
             job_id = job.get("id", job.get("name"))
             if job_id == self._job_id:
                 return job
-        
+
         return None
-        
+
     @property
     def native_value(self) -> str | None:
         """Return the state of the sensor."""
@@ -79,7 +80,7 @@ class VeeamJobSensor(CoordinatorEntity, SensorEntity):
                 "next_run": job_data.get("next_run"),
                 "last_result": job_data.get("last_result"),
             }
-        
+
         return {}
 
     @property

@@ -112,6 +112,56 @@ automation:
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+### Development Setup
+
+To set up the development environment:
+
+```bash
+# Install development dependencies
+pip install black isort flake8 mypy pre-commit
+
+# Install pre-commit hooks (optional but recommended)
+pre-commit install
+```
+
+### Code Quality
+
+This project uses automated testing and formatting:
+
+- **Black**: Code formatting (line length: 100)
+- **isort**: Import sorting
+- **flake8**: Linting
+- **mypy**: Type checking
+- **HACS Action**: HACS integration validation
+- **Hassfest**: Home Assistant manifest validation
+
+Run formatting and checks locally:
+
+```bash
+# Format code
+black custom_components/
+isort custom_components/
+
+# Run linting
+flake8 custom_components/
+
+# Type checking
+mypy custom_components/ --ignore-missing-imports
+
+# Validate JSON
+python -m json.tool custom_components/veeam_br/manifest.json
+```
+
+### CI/CD
+
+All pull requests are automatically validated with:
+- Python code formatting (Black, isort)
+- Linting (flake8)
+- Type checking (mypy)
+- HACS validation
+- Home Assistant manifest validation (hassfest)
+- JSON schema validation
+
 ## License
 
 This project is licensed under the terms included in the LICENSE file.
