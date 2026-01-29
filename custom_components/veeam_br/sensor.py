@@ -155,7 +155,6 @@ class VeeamJobStatusSensor(VeeamJobBaseSensor):
         super().__init__(coordinator, config_entry, job_data)
         self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_status"
         self._attr_name = "Status"
-        self._attr_entity_category = None
 
     @property
     def native_value(self) -> str | None:
@@ -208,7 +207,6 @@ class VeeamJobLastResultSensor(VeeamJobBaseSensor):
         super().__init__(coordinator, config_entry, job_data)
         self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_last_result"
         self._attr_name = "Last Result"
-        self._attr_entity_category = None
 
     @property
     def native_value(self) -> str | None:
@@ -235,7 +233,6 @@ class VeeamJobLastRunSensor(VeeamJobBaseSensor):
         self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_last_run"
         self._attr_name = "Last Run"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
@@ -255,7 +252,6 @@ class VeeamJobNextRunSensor(VeeamJobBaseSensor):
         self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_next_run"
         self._attr_name = "Next Run"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
@@ -406,7 +402,6 @@ class VeeamLicenseStatusSensor(VeeamLicenseBaseSensor):
         super().__init__(coordinator, config_entry)
         self._attr_unique_id = f"{config_entry.entry_id}_license_status"
         self._attr_name = "Status"
-        self._attr_entity_category = None
 
     @property
     def native_value(self) -> str | None:
@@ -469,7 +464,6 @@ class VeeamLicenseExpirationSensor(VeeamLicenseBaseSensor):
         self._attr_unique_id = f"{config_entry.entry_id}_license_expiration"
         self._attr_name = "Expiration Date"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
@@ -489,7 +483,6 @@ class VeeamLicenseSupportExpirationSensor(VeeamLicenseBaseSensor):
         self._attr_unique_id = f"{config_entry.entry_id}_license_support_expiration"
         self._attr_name = "Support Expiration Date"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
