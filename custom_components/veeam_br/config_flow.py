@@ -195,7 +195,7 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
         current_api_version = self.config_entry.options.get(
             CONF_API_VERSION, self.config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
         )
-        
+
         # Ensure current_api_version is valid, fallback to default if not
         if current_api_version not in API_VERSIONS:
             _LOGGER.warning(
