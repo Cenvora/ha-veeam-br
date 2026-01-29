@@ -90,28 +90,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not client:
                 raise UpdateFailed("No authenticated client available")
 
-            # Get backup jobs and their status using the veeam-br library
+            # Get backup jobs using sync_detailed to avoid broken JobsResult.from_dict()
+            # The veeam-br package has missing model files, so we parse the JSON directly
             def _get_jobs():
-                return get_all_jobs.sync(client=client, x_api_version=api_version)
+                return get_all_jobs.sync_detailed(client=client, x_api_version=api_version)
 
-            jobs_response = await hass.async_add_executor_job(_get_jobs)
+            response = await hass.async_add_executor_job(_get_jobs)
 
-            # Process the response
-            if not jobs_response or not hasattr(jobs_response, "data"):
+            # Check response status
+            if response.status_code != 200:
+                raise UpdateFailed(f"API returned status {response.status_code}")
+
+            # Parse the JSON response directly instead of using JobsResult.from_dict()
+            # which tries to import non-existent model files
+            try:
+                response_data = response.content.decode("utf-8")
+                import json
+                data = json.loads(response_data)
+            except (ValueError, json.JSONDecodeError) as err:
+                raise UpdateFailed(f"Failed to parse API response: {err}") from err
+
+            # Extract jobs from the response
+            jobs_data = data.get("data", [])
+            if not isinstance(jobs_data, list):
                 return []
 
             # Convert jobs to a list of dictionaries for easier processing
             jobs = []
-            for job in jobs_response.data:
+            for job in jobs_data:
+                if not isinstance(job, dict):
+                    continue
                 jobs.append(
                     {
-                        "id": getattr(job, "id", None),
-                        "name": getattr(job, "name", "Unknown"),
-                        "status": getattr(job, "status", "unknown"),
-                        "type": getattr(job, "type", None),
-                        "last_run": getattr(job, "last_run", None),
-                        "next_run": getattr(job, "next_run", None),
-                        "last_result": getattr(job, "last_result", None),
+                        "id": job.get("id"),
+                        "name": job.get("name", "Unknown"),
+                        "status": job.get("status", "unknown"),
+                        "type": job.get("type"),
+                        "last_run": job.get("lastRun"),
+                        "next_run": job.get("nextRun"),
+                        "last_result": job.get("lastResult"),
                     }
                 )
 
