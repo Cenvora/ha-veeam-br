@@ -77,7 +77,7 @@ class VeeamJobSensor(CoordinatorEntity, SensorEntity):
         self._job_name = job_data.get("name", "Unknown Job")
 
         self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}"
-        self._attr_name = f"Veeam {self._job_name}"
+        self._attr_name = f"Veeam Job - {self._job_name}"
 
     def _job(self) -> dict[str, Any] | None:
         if not self.coordinator.data:
