@@ -45,6 +45,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         get_installed_license = importlib.import_module(
             f"veeam_br.{api_module}.api.license_.get_installed_license"
         )
+        get_all_repositories = importlib.import_module(
+            f"veeam_br.{api_module}.api.repositories.get_all_repositories"
+        )
         # Import UNSET type for proper type checking
         types_module = importlib.import_module(f"veeam_br.{api_module}.types")
         UNSET = types_module.UNSET
@@ -88,6 +91,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             def _get_license():
                 return get_installed_license.sync_detailed(
+                    client=client,
+                    x_api_version=api_version,
+                )
+
+            def _get_repositories():
+                return get_all_repositories.sync_detailed(
                     client=client,
                     x_api_version=api_version,
                 )
@@ -174,9 +183,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if license_response.status_code == 200 and license_response.parsed:
                     license_data = license_response.parsed
 
-                    # Helper function to safely get enum value
-                    def get_enum_value(obj, attr_name, default="Unknown"):
-                        """Extract enum value, handling both enum types and UNSET."""
+                    # Helper function to safely get enum value from object attribute
+                    def get_license_enum_attr(obj, attr_name, default="Unknown"):
+                        """Extract enum value from object attribute, handling both enum types and UNSET."""
                         attr = getattr(obj, attr_name, None)
                         if attr is None:
                             return default
@@ -188,9 +197,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             return attr.value
                         return str(attr)
 
-                    # Helper function to safely get datetime
-                    def get_datetime_value(obj, attr_name):
-                        """Extract datetime value, handling UNSET."""
+                    # Helper function to safely get datetime from object attribute
+                    def get_license_datetime_attr(obj, attr_name):
+                        """Extract datetime value from object attribute, handling UNSET."""
                         attr = getattr(obj, attr_name, None)
                         if attr is None:
                             return None
@@ -200,19 +209,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         return attr
 
                     license_info = {
-                        "status": get_enum_value(license_data, "status"),
-                        "edition": get_enum_value(license_data, "edition"),
-                        "type": get_enum_value(
+                        "status": get_license_enum_attr(license_data, "status"),
+                        "edition": get_license_enum_attr(license_data, "edition"),
+                        "type": get_license_enum_attr(
                             license_data, "type_"
                         ),  # Note: type_ with underscore
-                        "expiration_date": get_datetime_value(license_data, "expiration_date"),
-                        "support_expiration_date": get_datetime_value(
+                        "expiration_date": get_license_datetime_attr(
+                            license_data, "expiration_date"
+                        ),
+                        "support_expiration_date": get_license_datetime_attr(
                             license_data, "support_expiration_date"
                         ),
                         "support_id": getattr(license_data, "support_id", "Unknown"),
                         "auto_update_enabled": getattr(license_data, "auto_update_enabled", False),
                         "licensed_to": getattr(license_data, "licensed_to", "Unknown"),
-                        "cloud_connect": get_enum_value(license_data, "cloud_connect"),
+                        "cloud_connect": get_license_enum_attr(license_data, "cloud_connect"),
                         "free_agent_instance_consumption_enabled": getattr(
                             license_data, "free_agent_instance_consumption_enabled", False
                         ),
@@ -222,10 +233,101 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:
                 _LOGGER.warning("Failed to fetch license info: %s", err)
 
+            # Fetch repositories information
+            repositories_list = []
+            try:
+                repositories_response = await hass.async_add_executor_job(_get_repositories)
+                if repositories_response.status_code == 200 and repositories_response.parsed:
+                    repositories_result = repositories_response.parsed
+                    repositories_data = repositories_result.data if repositories_result else []
+
+                    _LOGGER.debug("Fetched %d repositories from API", len(repositories_data))
+
+                    # Helper to safely get UUID as string
+                    def get_uuid_value(uuid_val):
+                        """Extract UUID value."""
+                        if uuid_val is None or uuid_val is UNSET:
+                            return None
+                        return str(uuid_val)
+
+                    # Helper to serialize nested objects to dict
+                    def serialize_value(value):
+                        """Recursively serialize values to JSON-compatible types."""
+                        if value is None or value is UNSET:
+                            return None
+                        if isinstance(value, (str, int, float, bool)):
+                            return value
+                        if isinstance(value, dict):
+                            return {k: serialize_value(v) for k, v in value.items()}
+                        if isinstance(value, (list, tuple)):
+                            return [serialize_value(item) for item in value]
+                        # Handle objects with to_dict method
+                        if hasattr(value, "to_dict"):
+                            return value.to_dict()
+                        # Handle enum types
+                        if hasattr(value, "value"):
+                            return value.value
+                        # Convert remaining types to string as fallback
+                        try:
+                            str_value = str(value)
+                            _LOGGER.debug(
+                                "Serialized unexpected type %s to string: %s",
+                                type(value).__name__,
+                                str_value[:50],
+                            )
+                            return str_value
+                        except Exception as err:
+                            _LOGGER.warning(
+                                "Failed to serialize value of type %s: %s",
+                                type(value).__name__,
+                                err,
+                            )
+                            return None
+
+                    for repo in repositories_data:
+                        try:
+                            repo_dict = {
+                                "id": get_uuid_value(repo.id),
+                                "name": repo.name or "Unknown",
+                                "description": repo.description or "",
+                                "type": get_enum_value(repo.type_),
+                                "unique_id": (
+                                    repo.unique_id if repo.unique_id is not UNSET else None
+                                ),
+                            }
+
+                            # Add all additional properties from the API response
+                            if hasattr(repo, "additional_properties"):
+                                for key, value in repo.additional_properties.items():
+                                    repo_dict[key] = serialize_value(value)
+
+                            repositories_list.append(repo_dict)
+                            _LOGGER.debug(
+                                "Successfully parsed repository: %s (type: %s)",
+                                repo_dict.get("name"),
+                                repo_dict.get("type"),
+                            )
+                        except (AttributeError, TypeError) as err:
+                            _LOGGER.warning(
+                                "Failed to parse repository %s: %s",
+                                getattr(repo, "name", "Unknown"),
+                                err,
+                            )
+                            continue
+            except (AttributeError, KeyError, TypeError) as err:
+                _LOGGER.warning("Failed to parse repositories: %s", err)
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch repositories: %s", err)
+
+            _LOGGER.debug(
+                "Total repositories added to coordinator data: %d", len(repositories_list)
+            )
+
             return {
                 "jobs": jobs_list,
                 "server_info": server_info,
                 "license_info": license_info,
+                "repositories": repositories_list,
             }
 
         except Exception as err:
