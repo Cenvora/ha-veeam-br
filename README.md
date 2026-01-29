@@ -15,8 +15,7 @@ A Home Assistant custom integration that monitors Veeam Backup & Replication ser
 ## Requirements
 
 - Home Assistant 2023.1.0 or newer
-- Veeam Backup & Replication server with REST API enabled
-- [veeam-br](https://github.com/Cenvora/veeam-br) Python library
+- Veeam Backup & Replication server with REST API enabled (Community Edition not supported)
 
 ## Installation
 
