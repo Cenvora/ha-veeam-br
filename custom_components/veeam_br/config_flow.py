@@ -26,6 +26,50 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _get_api_version_selector_config(
+    preferred_version: str | None = None,
+) -> tuple[list[str], str]:
+    """Get API version options and default for selector.
+
+    Ensures the default value is always in the options list.
+
+    Args:
+        preferred_version: The preferred API version to use as default.
+                          If None, uses DEFAULT_API_VERSION.
+
+    Returns:
+        A tuple of (options_list, default_value) where default_value
+        is guaranteed to be in options_list.
+    """
+    api_version_options = list(API_VERSIONS.keys())
+
+    # Determine which version to use as default
+    if preferred_version and preferred_version in api_version_options:
+        return api_version_options, preferred_version
+
+    if DEFAULT_API_VERSION in api_version_options:
+        if preferred_version and preferred_version != DEFAULT_API_VERSION:
+            _LOGGER.warning(
+                "Preferred API version %s not available, using default %s",
+                preferred_version,
+                DEFAULT_API_VERSION,
+            )
+        return api_version_options, DEFAULT_API_VERSION
+
+    if api_version_options:
+        api_version_default = api_version_options[0]
+        _LOGGER.warning(
+            "Default API version %s not available, using %s",
+            DEFAULT_API_VERSION,
+            api_version_default,
+        )
+        return api_version_options, api_version_default
+
+    # Fallback if API_VERSIONS is somehow empty (should never happen)
+    _LOGGER.error("No API versions available, using fallback")
+    return [DEFAULT_API_VERSION], DEFAULT_API_VERSION
+
+
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
@@ -145,6 +189,9 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 return self.async_create_entry(title=info["title"], data=user_input)
 
+        # Get API version options and default for selector
+        api_version_options, api_version_default = _get_api_version_selector_config()
+
         # Show the form
         data_schema = vol.Schema(
             {
@@ -154,10 +201,10 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD): cv.string,
                 vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): cv.boolean,
                 vol.Optional(
-                    CONF_API_VERSION, default=DEFAULT_API_VERSION
+                    CONF_API_VERSION, default=api_version_default
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=list(API_VERSIONS.keys()),
+                        options=api_version_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
@@ -201,22 +248,18 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
             CONF_API_VERSION, self.config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
         )
 
-        # Ensure current_api_version is valid, fallback to default if not
-        if current_api_version not in API_VERSIONS:
-            _LOGGER.warning(
-                "Current API version %s not available, falling back to %s",
-                current_api_version,
-                DEFAULT_API_VERSION,
-            )
-            current_api_version = DEFAULT_API_VERSION
+        # Get API version options and default for selector
+        api_version_options, api_version_default = _get_api_version_selector_config(
+            preferred_version=current_api_version
+        )
 
         options_schema = vol.Schema(
             {
                 vol.Required(
-                    CONF_API_VERSION, default=current_api_version
+                    CONF_API_VERSION, default=api_version_default
                 ): selector.SelectSelector(
                     selector.SelectSelectorConfig(
-                        options=list(API_VERSIONS.keys()),
+                        options=api_version_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
                     )
                 ),
