@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-import importlib
 import json
 import logging
 
@@ -13,7 +12,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    API_VERSIONS,
     CONF_API_VERSION,
     CONF_VERIFY_SSL,
     DEFAULT_API_VERSION,
@@ -34,35 +32,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_version = entry.options.get(
         CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
     )
-    api_module = API_VERSIONS.get(api_version, "v1_3_rev1")
-
-    # Import the veeam_br library dynamically based on API version
-    try:
-        get_all_jobs_module = importlib.import_module(
-            f"veeam_br.{api_module}.api.jobs.get_all_jobs"
-        )
-        get_all_jobs = get_all_jobs_module
-    except ImportError as err:
-        # Provide more specific feedback about what went wrong during import
-        error_message: str
-        if isinstance(err, ModuleNotFoundError):
-            missing_name = getattr(err, "name", "") or ""
-            if missing_name == "veeam_br":
-                error_message = "veeam_br library is not installed"
-            elif missing_name.startswith(f"veeam_br.{api_module}"):
-                error_message = f"API version {api_version} is not supported or not available"
-            else:
-                error_message = "A required veeam_br module could not be found"
-        else:
-            error_message = "An unexpected import error occurred while loading the veeam_br library"
-
-        _LOGGER.error(
-            "Failed to import veeam_br library for API version %s: %s (%s)",
-            api_version,
-            error_message,
-            err,
-        )
-        return False
 
     # Construct base URL
     host = entry.data[CONF_HOST]
@@ -91,10 +60,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not client:
                 raise UpdateFailed("No authenticated client available")
 
-            # Get backup jobs using sync_detailed to avoid broken JobsResult.from_dict()
-            # The veeam-br package has missing model files, so we parse the JSON directly
+            # Make a direct HTTP request to avoid importing broken veeam-br models
+            # The veeam-br package has missing model files (backup_copy_job_model, etc.)
+            # that cause import errors when using the API wrapper functions
             def _get_jobs():
-                return get_all_jobs.sync_detailed(client=client, x_api_version=api_version)
+                httpx_client = client.get_httpx_client()
+                response = httpx_client.get(
+                    "/api/v1/jobs",
+                    params={"limit": 200},
+                    headers={"x-api-version": api_version},
+                )
+                return response
 
             response = await hass.async_add_executor_job(_get_jobs)
 
@@ -106,8 +82,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if response.status_code != 200:
                 raise UpdateFailed(f"API returned status {response.status_code}")
 
-            # Parse the JSON response directly instead of using JobsResult.from_dict()
-            # which tries to import non-existent model files
+            # Parse the JSON response directly
             try:
                 data = json.loads(response.text)
             except json.JSONDecodeError as err:
