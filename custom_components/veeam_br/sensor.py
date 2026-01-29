@@ -77,7 +77,7 @@ class VeeamJobSensor(CoordinatorEntity, SensorEntity):
         self._job_name = job_data.get("name", "Unknown Job")
 
         self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}"
-        self._attr_name = f"Veeam {self._job_name}"
+        self._attr_name = f"Job - {self._job_name}"
 
     def _job(self) -> dict[str, Any] | None:
         if not self.coordinator.data:
@@ -90,7 +90,15 @@ class VeeamJobSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         job = self._job()
-        return job.get("status") if job else None
+        if not job:
+            return None
+        # Use last_result as the main state since icons are based on result (success/failed/warning)
+        # If job is currently running, show that instead
+        status = job.get("status", "").lower()
+        if status in ("running", "starting"):
+            return "running"
+        last_result = job.get("last_result", "").lower()
+        return last_result if last_result else "unknown"
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -99,6 +107,7 @@ class VeeamJobSensor(CoordinatorEntity, SensorEntity):
     @property
     def icon(self) -> str:
         state = self.native_value
+        # native_value returns lowercase state strings
         if state == "running":
             return "mdi:backup-restore"
         if state == "success":

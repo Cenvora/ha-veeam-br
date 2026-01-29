@@ -36,13 +36,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Import API endpoints dynamically
     try:
-        get_all_jobs = importlib.import_module(f"veeam_br.{api_module}.api.jobs.get_all_jobs")
+        get_all_jobs_states = importlib.import_module(
+            f"veeam_br.{api_module}.api.jobs.get_all_jobs_states"
+        )
         get_server_info = importlib.import_module(
             f"veeam_br.{api_module}.api.service.get_server_info"
         )
         get_installed_license = importlib.import_module(
             f"veeam_br.{api_module}.api.license_.get_installed_license"
         )
+        # Import UNSET type for proper type checking
+        types_module = importlib.import_module(f"veeam_br.{api_module}.types")
+        UNSET = types_module.UNSET
     except ImportError as err:
         _LOGGER.error("Failed to import veeam_br API: %s", err)
         return False
@@ -70,7 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise UpdateFailed("No authenticated client available")
 
             def _get_jobs():
-                return get_all_jobs.sync_detailed(
+                return get_all_jobs_states.sync_detailed(
                     client=client,
                     x_api_version=api_version,
                 )
@@ -92,22 +97,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if jobs_response.status_code != 200:
                 raise UpdateFailed(f"Jobs API returned status {jobs_response.status_code}")
 
-            jobs_data = jobs_response.parsed or []
-            if not isinstance(jobs_data, list):
-                jobs_data = []
+            # Access the .data field from JobStatesResult
+            jobs_result = jobs_response.parsed
+            jobs_data = jobs_result.data if jobs_result else []
 
-            jobs_list = [
-                {
-                    "id": job.id,
-                    "name": job.name or "Unknown",
-                    "status": job.status or "unknown",
-                    "type": job.type,
-                    "last_run": job.last_run,
-                    "next_run": job.next_run,
-                    "last_result": job.last_result,
-                }
-                for job in jobs_data
-            ]
+            # Helper function to safely get enum value
+            def get_enum_value(enum_val, default="unknown"):
+                """Extract enum value, handling both enum types and UNSET."""
+                if enum_val is None or enum_val is UNSET:
+                    return default
+                # Try to get enum value
+                if hasattr(enum_val, "value"):
+                    return enum_val.value
+                return str(enum_val)
+
+            # Helper function to safely get datetime
+            def get_datetime_value(dt_val):
+                """Extract datetime value, handling UNSET."""
+                if dt_val is None or dt_val is UNSET:
+                    return None
+                return dt_val
+
+            jobs_list = []
+            for job in jobs_data:
+                try:
+                    job_dict = {
+                        "id": str(job.id),
+                        "name": job.name or "Unknown",
+                        "type": get_enum_value(job.type_),
+                        "status": get_enum_value(job.status),
+                        "last_result": get_enum_value(job.last_result),
+                        "last_run": get_datetime_value(job.last_run),
+                        "next_run": get_datetime_value(job.next_run),
+                    }
+                    jobs_list.append(job_dict)
+                except (AttributeError, TypeError) as err:
+                    _LOGGER.warning("Failed to parse job: %s", err)
+                    continue
 
             # Fetch server information
             server_info = None
