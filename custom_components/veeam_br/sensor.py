@@ -170,7 +170,7 @@ class VeeamServerInfoSensor(CoordinatorEntity, SensorEntity):
         """Return device information about this entity."""
         return {
             "identifiers": {(DOMAIN, self._config_entry.entry_id)},
-            "name": f"Veeam BR ({self._config_entry.data.get('host', 'Unknown')})",
+            "name": f"Veeam B&R ({self._config_entry.data.get('host', 'Unknown')})",
             "manufacturer": "Veeam",
             "model": "Backup & Replication",
         }
