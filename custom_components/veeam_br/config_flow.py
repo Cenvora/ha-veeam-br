@@ -151,13 +151,32 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage the options."""
+        errors: dict[str, str] = {}
+
         if user_input is not None:
-            # Update the config entry data with new API version
-            self.hass.config_entries.async_update_entry(
-                self.config_entry,
-                data={**self.config_entry.data, CONF_API_VERSION: user_input[CONF_API_VERSION]},
-            )
-            return self.async_create_entry(title="", data={})
+            # Validate the new API version by testing if it can connect
+            # Create a test data dict with the new API version and existing config
+            test_data = {**self.config_entry.data, CONF_API_VERSION: user_input[CONF_API_VERSION]}
+
+            try:
+                await validate_input(self.hass, test_data)
+            except PermissionError:
+                errors["base"] = "invalid_auth"
+            except ConnectionError:
+                errors["base"] = "cannot_connect"
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.exception("Unexpected exception validating new API version")
+                errors["base"] = "unknown"
+            else:
+                # Only update if validation passed
+                self.hass.config_entries.async_update_entry(
+                    self.config_entry,
+                    data={
+                        **self.config_entry.data,
+                        CONF_API_VERSION: user_input[CONF_API_VERSION],
+                    },
+                )
+                return self.async_create_entry(title="", data={})
 
         # Get current API version from config entry
         current_api_version = self.config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
@@ -170,4 +189,4 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=options_schema)
+        return self.async_show_form(step_id="init", data_schema=options_schema, errors=errors)

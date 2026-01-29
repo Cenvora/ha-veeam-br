@@ -42,6 +42,39 @@ class VeeamTokenManager:
         self._token_expires_at: datetime | None = None
         self._authenticated_client = None
 
+        # Cache API classes/modules on initialization
+        self._api_classes = None
+        try:
+            self._api_classes = self._load_api_classes()
+        except Exception as err:
+            _LOGGER.error("Failed to load API classes for version %s: %s", api_version, err)
+
+    def _load_api_classes(self) -> dict[str, Any]:
+        """Load and cache API classes for the configured API version.
+
+        Returns:
+            dict: Dictionary containing cached API classes and modules
+        """
+        api_module = API_VERSIONS.get(self._api_version, "v1_3_rev1")
+
+        # Dynamic imports based on API version
+        client_module = importlib.import_module(f"veeam_br.{api_module}")
+        create_token_module = importlib.import_module(
+            f"veeam_br.{api_module}.api.login.create_token"
+        )
+        models_module = importlib.import_module(f"veeam_br.{api_module}.models.e_login_grant_type")
+        token_spec_module = importlib.import_module(
+            f"veeam_br.{api_module}.models.token_login_spec"
+        )
+
+        return {
+            "Client": client_module.Client,
+            "AuthenticatedClient": client_module.AuthenticatedClient,
+            "create_token": create_token_module,
+            "ELoginGrantType": models_module.ELoginGrantType,
+            "TokenLoginSpec": token_spec_module.TokenLoginSpec,
+        }
+
     async def ensure_valid_token(self, hass) -> bool:
         """Ensure we have a valid access token.
 
@@ -102,25 +135,15 @@ class VeeamTokenManager:
         Returns:
             bool: True if successful
         """
+        if not self._api_classes:
+            _LOGGER.error("API classes not loaded, cannot refresh token")
+            return False
+
         try:
-            api_module = API_VERSIONS.get(self._api_version, "v1_3_rev1")
-
-            # Dynamic imports based on API version
-            client_module = importlib.import_module(f"veeam_br.{api_module}")
-            create_token_module = importlib.import_module(
-                f"veeam_br.{api_module}.api.login.create_token"
-            )
-            models_module = importlib.import_module(
-                f"veeam_br.{api_module}.models.e_login_grant_type"
-            )
-            token_spec_module = importlib.import_module(
-                f"veeam_br.{api_module}.models.token_login_spec"
-            )
-
-            Client = client_module.Client
-            create_token = create_token_module
-            ELoginGrantType = models_module.ELoginGrantType
-            TokenLoginSpec = token_spec_module.TokenLoginSpec
+            Client = self._api_classes["Client"]
+            create_token = self._api_classes["create_token"]
+            ELoginGrantType = self._api_classes["ELoginGrantType"]
+            TokenLoginSpec = self._api_classes["TokenLoginSpec"]
 
             def _do_refresh():
                 client = Client(base_url=self._base_url, verify_ssl=self._verify_ssl)
@@ -163,25 +186,15 @@ class VeeamTokenManager:
         Returns:
             bool: True if successful
         """
+        if not self._api_classes:
+            _LOGGER.error("API classes not loaded, cannot authenticate")
+            return False
+
         try:
-            api_module = API_VERSIONS.get(self._api_version, "v1_3_rev1")
-
-            # Dynamic imports based on API version
-            client_module = importlib.import_module(f"veeam_br.{api_module}")
-            create_token_module = importlib.import_module(
-                f"veeam_br.{api_module}.api.login.create_token"
-            )
-            models_module = importlib.import_module(
-                f"veeam_br.{api_module}.models.e_login_grant_type"
-            )
-            token_spec_module = importlib.import_module(
-                f"veeam_br.{api_module}.models.token_login_spec"
-            )
-
-            Client = client_module.Client
-            create_token = create_token_module
-            ELoginGrantType = models_module.ELoginGrantType
-            TokenLoginSpec = token_spec_module.TokenLoginSpec
+            Client = self._api_classes["Client"]
+            create_token = self._api_classes["create_token"]
+            ELoginGrantType = self._api_classes["ELoginGrantType"]
+            TokenLoginSpec = self._api_classes["TokenLoginSpec"]
 
             def _do_auth():
                 client = Client(base_url=self._base_url, verify_ssl=self._verify_ssl)
@@ -216,15 +229,20 @@ class VeeamTokenManager:
 
     def _update_authenticated_client(self):
         """Update the authenticated client with the new token."""
-        api_module = API_VERSIONS.get(self._api_version, "v1_3_rev1")
-        client_module = importlib.import_module(f"veeam_br.{api_module}")
-        AuthenticatedClient = client_module.AuthenticatedClient
+        if not self._api_classes:
+            _LOGGER.error("API classes not loaded, cannot update authenticated client")
+            return
 
-        self._authenticated_client = AuthenticatedClient(
-            base_url=self._base_url,
-            token=self._access_token,
-            verify_ssl=self._verify_ssl,
-        )
+        try:
+            AuthenticatedClient = self._api_classes["AuthenticatedClient"]
+
+            self._authenticated_client = AuthenticatedClient(
+                base_url=self._base_url,
+                token=self._access_token,
+                verify_ssl=self._verify_ssl,
+            )
+        except Exception as err:
+            _LOGGER.error("Failed to create authenticated client: %s", err)
 
     def get_authenticated_client(self):
         """Get the authenticated client for API calls.
