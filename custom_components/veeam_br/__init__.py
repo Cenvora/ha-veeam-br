@@ -345,6 +345,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                             # Extract repository-specific fields from the repo object
                             # Immutability - from bucket.immutability for S3 repos
+                            _LOGGER.info(
+                                "Repository %s: Checking for bucket (has bucket attr=%s, bucket is UNSET=%s)",
+                                repo_dict.get("name"),
+                                hasattr(repo, "bucket"),
+                                repo.bucket is UNSET if hasattr(repo, "bucket") else "N/A",
+                            )
                             if hasattr(repo, "bucket") and repo.bucket is not UNSET:
                                 bucket = repo.bucket
                                 _LOGGER.debug(
