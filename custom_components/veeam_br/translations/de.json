@@ -17,7 +17,7 @@
     "error": {
       "cannot_connect": "Verbindung zum Veeam-Server fehlgeschlagen",
       "invalid_auth": "Ungültige Anmeldedaten",
-      "unknown": "Unerwarteter Fehler aufgetreten"
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten"
     },
     "abort": {
       "already_configured": "Dieser Veeam-Server ist bereits konfiguriert"
@@ -36,7 +36,7 @@
     "error": {
       "cannot_connect": "Verbindung zum Veeam-Server fehlgeschlagen",
       "invalid_auth": "Ungültige Anmeldedaten",
-      "unknown": "Unerwarteter Fehler aufgetreten"
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten"
     }
   }
 }
