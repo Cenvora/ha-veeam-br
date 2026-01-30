@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from homeassistant.components.binary_sensor import BinarySensorEntity, BinarySensorDeviceClass
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
@@ -131,6 +132,7 @@ async def async_setup_entry(
 
 class VeeamJobBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam Job sensors."""
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry, job_data):
         super().__init__(coordinator)
@@ -254,6 +256,7 @@ class VeeamJobNextRunSensor(VeeamJobBaseSensor):
 
 class VeeamServerBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam Server Info sensors."""
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry):
         super().__init__(coordinator)
@@ -396,6 +399,7 @@ class VeeamServerSQLVersionSensor(VeeamServerBaseSensor):
 
 class VeeamLicenseBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam License sensors."""
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry):
         super().__init__(coordinator)
@@ -552,48 +556,40 @@ class VeeamLicenseSupportIDSensor(VeeamLicenseBaseSensor):
         return "mdi:identifier"
 
 
-class VeeamLicenseAutoUpdateSensor(VeeamLicenseBaseSensor):
-    """Sensor for Veeam License Auto Update."""
+class VeeamLicenseAutoUpdateSensor(VeeamLicenseBaseSensor, BinarySensorEntity):
+    """Binary sensor for Veeam License Auto Update."""
+
+    _attr_device_class = BinarySensorDeviceClass.UPDATE
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, config_entry):
         super().__init__(coordinator, config_entry)
         self._attr_unique_id = f"{config_entry.entry_id}_license_auto_update"
         self._attr_name = "Auto Update Enabled"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
-    def native_value(self) -> str | None:
+    def is_on(self) -> bool | None:
         license_info = self._license_info()
         if not license_info:
             return None
-        enabled = license_info.get("auto_update_enabled", False)
-        return "Yes" if enabled else "No"
-
-    @property
-    def icon(self) -> str:
-        license_info = self._license_info()
-        if license_info and license_info.get("auto_update_enabled", False):
-            return "mdi:update"
-        return "mdi:update-off"
+        return bool(license_info.get("auto_update_enabled"))
 
 
-class VeeamLicenseCloudConnectSensor(VeeamLicenseBaseSensor):
-    """Sensor for Veeam License Cloud Connect."""
+class VeeamLicenseCloudConnectSensor(VeeamLicenseBaseSensor, BinarySensorEntity):
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, config_entry):
         super().__init__(coordinator, config_entry)
         self._attr_unique_id = f"{config_entry.entry_id}_license_cloud_connect"
-        self._attr_name = "Cloud Connect"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_name = "Cloud Connect Enabled"
 
     @property
-    def native_value(self) -> str | None:
+    def is_on(self) -> bool | None:
         license_info = self._license_info()
-        return license_info.get("cloud_connect") if license_info else None
-
-    @property
-    def icon(self) -> str:
-        return "mdi:cloud-sync"
+        if not license_info:
+            return None
+        return bool(license_info.get("cloud_connect"))
 
 
 # ===========================
@@ -603,6 +599,7 @@ class VeeamLicenseCloudConnectSensor(VeeamLicenseBaseSensor):
 
 class VeeamRepositoryBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam Repository sensors."""
+    _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator)
@@ -788,55 +785,35 @@ class VeeamRepositoryUsedSpacePercentSensor(VeeamRepositoryBaseSensor):
         return "mdi:chart-arc"
 
 
-class VeeamRepositoryOnlineStatusSensor(VeeamRepositoryBaseSensor):
-    """Sensor for Veeam Repository Online Status."""
+class VeeamRepositoryOnlineStatusSensor(VeeamRepositoryBaseSensor, BinarySensorEntity):
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator, config_entry, repository_data)
-        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_is_online"
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_online"
         self._attr_name = "Online"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
-    def native_value(self) -> str | None:
+    def is_on(self) -> bool | None:
         repo = self._repository()
         if not repo:
             return None
-        is_online = repo.get("is_online")
-        if is_online is None:
-            return "Unknown"
-        return "Online" if is_online else "Offline"
-
-    @property
-    def icon(self) -> str:
-        repo = self._repository()
-        if repo and repo.get("is_online") is True:
-            return "mdi:check-network"
-        return "mdi:close-network"
+        return repo.get("is_online")
 
 
-class VeeamRepositoryOutOfDateSensor(VeeamRepositoryBaseSensor):
-    """Sensor for Veeam Repository Out of Date Status."""
+class VeeamRepositoryOutOfDateSensor(VeeamRepositoryBaseSensor, BinarySensorEntity):
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator, config_entry, repository_data)
-        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_is_out_of_date"
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_out_of_date"
         self._attr_name = "Out of Date"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
-    def native_value(self) -> str | None:
+    def is_on(self) -> bool | None:
         repo = self._repository()
         if not repo:
             return None
-        is_out_of_date = repo.get("is_out_of_date")
-        if is_out_of_date is None:
-            return "Unknown"
-        return "Yes" if is_out_of_date else "No"
-
-    @property
-    def icon(self) -> str:
-        repo = self._repository()
-        if repo and repo.get("is_out_of_date") is True:
-            return "mdi:alert-circle"
-        return "mdi:check-circle"
+        return bool(repo.get("is_out_of_date"))
