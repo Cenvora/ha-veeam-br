@@ -617,7 +617,11 @@ class VeeamLicenseCloudConnectSensor(VeeamLicenseBinarySensorBase):
         license_info = self._license_info()
         if not license_info:
             return None
-        return bool(license_info.get("cloud_connect"))
+        cloud_connect = license_info.get("cloud_connect")
+        if cloud_connect is None:
+            return None
+        # cloud_connect is an enum string (e.g., "Enabled", "Disabled"), not a boolean
+        return str(cloud_connect).lower() == "enabled"
 
 
 # ===========================
