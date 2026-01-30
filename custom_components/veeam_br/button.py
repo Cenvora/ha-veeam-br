@@ -160,7 +160,9 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
                 _LOGGER.error("Failed to create rescan request for repository: %s", self._repo_name)
                 return
 
-            if response.status_code in (200, 202, 204):
+            # 201 means the rescan was scheduled (async operation)
+            # 200, 202, 204 are also success codes
+            if response.status_code in (200, 201, 202, 204):
                 _LOGGER.info("Successfully triggered rescan for repository: %s", self._repo_name)
                 # Request coordinator update to refresh repository state
                 await self.coordinator.async_request_refresh()

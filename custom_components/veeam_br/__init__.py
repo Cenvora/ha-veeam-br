@@ -347,6 +347,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             # Immutability - from bucket.immutability for S3 repos
                             if hasattr(repo, "bucket") and repo.bucket is not UNSET:
                                 bucket = repo.bucket
+                                _LOGGER.debug(
+                                    "Repository %s: bucket found, checking immutability",
+                                    repo_dict.get("name"),
+                                )
                                 if (
                                     hasattr(bucket, "immutability")
                                     and bucket.immutability is not UNSET
@@ -355,12 +359,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                     # Extract immutability enabled status
                                     # Check for UNSET since attrs models use UNSET instead of None
                                     is_enabled = getattr(immutability, "is_enabled", UNSET)
+                                    _LOGGER.debug(
+                                        "Repository %s: immutability.is_enabled=%s (type=%s, is UNSET=%s)",
+                                        repo_dict.get("name"),
+                                        is_enabled,
+                                        type(is_enabled).__name__,
+                                        is_enabled is UNSET,
+                                    )
                                     if is_enabled is not UNSET:
-                                        repo_dict["is_immutable"] = is_enabled
-                                        _LOGGER.debug(
-                                            "Repository %s immutability: is_enabled=%s",
+                                        # Ensure we store the boolean value, not the UNSET sentinel
+                                        repo_dict["is_immutable"] = bool(is_enabled)
+                                        _LOGGER.info(
+                                            "Repository %s: Set is_immutable=%s",
                                             repo_dict.get("name"),
-                                            is_enabled,
+                                            repo_dict["is_immutable"],
                                         )
                                         # Extract immutability days count if enabled
                                         if is_enabled:
