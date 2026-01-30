@@ -132,6 +132,7 @@ async def async_setup_entry(
 
 class VeeamJobBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam Job sensors."""
+
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry, job_data):
@@ -256,6 +257,7 @@ class VeeamJobNextRunSensor(VeeamJobBaseSensor):
 
 class VeeamServerBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam Server Info sensors."""
+
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry):
@@ -399,6 +401,7 @@ class VeeamServerSQLVersionSensor(VeeamServerBaseSensor):
 
 class VeeamLicenseBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam License sensors."""
+
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry):
@@ -599,6 +602,7 @@ class VeeamLicenseCloudConnectSensor(VeeamLicenseBaseSensor, BinarySensorEntity)
 
 class VeeamRepositoryBaseSensor(CoordinatorEntity, SensorEntity):
     """Base class for Veeam Repository sensors."""
+
     _attr_has_entity_name = True
 
     def __init__(self, coordinator, config_entry, repository_data):
@@ -684,7 +688,6 @@ class VeeamRepositoryCapacitySensor(VeeamRepositoryBaseSensor):
         super().__init__(coordinator, config_entry, repository_data)
         self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_capacity"
         self._attr_name = "Capacity"
-        self._attr_entity_category = None
         self._attr_native_unit_of_measurement = "GB"
         self._attr_device_class = SensorDeviceClass.DATA_SIZE
         self._attr_suggested_display_precision = 2
@@ -708,7 +711,6 @@ class VeeamRepositoryFreeSpaceSensor(VeeamRepositoryBaseSensor):
         super().__init__(coordinator, config_entry, repository_data)
         self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_free_space"
         self._attr_name = "Free Space"
-        self._attr_entity_category = None
         self._attr_native_unit_of_measurement = "GB"
         self._attr_device_class = SensorDeviceClass.DATA_SIZE
         self._attr_suggested_display_precision = 2
@@ -732,7 +734,6 @@ class VeeamRepositoryUsedSpaceSensor(VeeamRepositoryBaseSensor):
         super().__init__(coordinator, config_entry, repository_data)
         self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_used_space"
         self._attr_name = "Used Space"
-        self._attr_entity_category = None
         self._attr_native_unit_of_measurement = "GB"
         self._attr_device_class = SensorDeviceClass.DATA_SIZE
         self._attr_suggested_display_precision = 2
@@ -758,7 +759,6 @@ class VeeamRepositoryUsedSpacePercentSensor(VeeamRepositoryBaseSensor):
             f"{config_entry.entry_id}_repository_{self._repo_id}_used_space_percent"
         )
         self._attr_name = "Used Space"
-        self._attr_entity_category = None
         self._attr_native_unit_of_measurement = "%"
         self._attr_suggested_display_precision = 1
 
