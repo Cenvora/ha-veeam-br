@@ -344,7 +344,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 repo_dict["is_out_of_date"] = getattr(state, "is_out_of_date", None)
 
                             # Extract repository-specific fields from the repo object
-                            # Immutability - from bucket.immutability.isEnabled for S3 repos
+                            # Immutability - from bucket.immutability for S3 repos
                             if hasattr(repo, "bucket") and repo.bucket is not UNSET:
                                 bucket = repo.bucket
                                 if (
@@ -352,32 +352,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                     and bucket.immutability is not UNSET
                                 ):
                                     immutability = bucket.immutability
-                                    repo_dict["is_immutable"] = getattr(
-                                        immutability, "is_enabled", None
-                                    )
+                                    # Extract immutability enabled status
+                                    is_enabled = getattr(immutability, "is_enabled", None)
+                                    repo_dict["is_immutable"] = is_enabled
+                                    # Extract immutability days count if enabled
+                                    if is_enabled:
+                                        repo_dict["immutability_days"] = getattr(
+                                            immutability, "days_count", None
+                                        )
 
                             # Accessible - use is_online from state as a proxy
                             repo_dict["is_accessible"] = repo_dict.get("is_online")
 
                             # Add all additional properties from the API response
-                            # This will capture any other fields like hardened, object_lock, mounted
+                            # This will capture any other fields like mounted
                             if hasattr(repo, "additional_properties"):
                                 for key, value in repo.additional_properties.items():
                                     repo_dict[key] = serialize_value(value)
                                     # Map additional properties to expected sensor names
-                                    if key in (
-                                        "isHardened",
-                                        "is_hardened",
-                                        "hardened",
-                                    ):
-                                        repo_dict["is_hardened"] = serialize_value(value)
-                                    elif key in (
-                                        "isObjectLock",
-                                        "is_object_lock",
-                                        "objectLock",
-                                    ):
-                                        repo_dict["is_object_lock"] = serialize_value(value)
-                                    elif key in ("isMounted", "is_mounted", "mounted"):
+                                    if key in ("isMounted", "is_mounted", "mounted"):
                                         repo_dict["is_mounted"] = serialize_value(value)
 
                             repositories_list.append(repo_dict)

@@ -135,12 +135,12 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
             # Trigger the rescan using veeam-br library
             def _rescan():
                 # The rescan_repositories endpoint accepts a body with repositoryIds
-                # Create request body with repository IDs
-                body = {"repositoryIds": [self._repo_id]}
+                # Create the body as a simple dict - the library will handle serialization
+                json_body = {"repositoryIds": [self._repo_id]}
 
                 return rescan_repositories.sync_detailed(
                     client=client,
-                    body=body,
+                    json_body=json_body,
                     x_api_version=api_version,
                 )
 

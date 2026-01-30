@@ -75,14 +75,18 @@ async def async_setup_entry(
                     VeeamRepositoryOnlineStatusSensor(coordinator, entry, repository),
                     VeeamRepositoryOutOfDateSensor(coordinator, entry, repository),
                     VeeamRepositoryImmutableSensor(coordinator, entry, repository),
-                    VeeamRepositoryObjectLockSensor(coordinator, entry, repository),
-                    VeeamRepositoryHardenedSensor(coordinator, entry, repository),
                     VeeamRepositoryAccessibleSensor(coordinator, entry, repository),
                     VeeamRepositoryMountedSensor(coordinator, entry, repository),
                     VeeamRepositoryCapacityWarningSensor(coordinator, entry, repository),
                     VeeamRepositoryCapacityCriticalSensor(coordinator, entry, repository),
                 ]
             )
+
+            # Add immutability days sensor only if immutability is enabled
+            if repository.get("is_immutable") and repository.get("immutability_days"):
+                new_entities.append(
+                    VeeamRepositoryImmutabilityDaysSensor(coordinator, entry, repository)
+                )
             added_repository_ids.add(repo_id)
             _LOGGER.debug(
                 "Adding repository sensors for: %s (id: %s)",
@@ -1001,48 +1005,29 @@ class VeeamRepositoryImmutableSensor(VeeamRepositoryBinarySensorBase):
         return "mdi:lock" if self.is_on else "mdi:lock-open"
 
 
-class VeeamRepositoryObjectLockSensor(VeeamRepositoryBinarySensorBase):
-    """Binary sensor for Veeam Repository Object Lock."""
+class VeeamRepositoryImmutabilityDaysSensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Immutability Days."""
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator, config_entry, repository_data)
-        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_object_lock"
-        self._attr_name = "Object Lock"
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_repository_{self._repo_id}_immutability_days"
+        )
+        self._attr_name = "Immutability Days"
+        self._attr_native_unit_of_measurement = "days"
 
     @property
-    def is_on(self) -> bool | None:
+    def native_value(self) -> int | None:
         repo = self._repository()
         if not repo:
             return None
-        return bool(repo.get("is_object_lock"))
+        return repo.get("immutability_days")
 
     @property
     def icon(self) -> str:
-        return "mdi:shield-lock" if self.is_on else "mdi:shield-lock-open"
-
-
-class VeeamRepositoryHardenedSensor(VeeamRepositoryBinarySensorBase):
-    """Binary sensor for Veeam Repository Hardened status."""
-
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    def __init__(self, coordinator, config_entry, repository_data):
-        super().__init__(coordinator, config_entry, repository_data)
-        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_hardened"
-        self._attr_name = "Hardened"
-
-    @property
-    def is_on(self) -> bool | None:
-        repo = self._repository()
-        if not repo:
-            return None
-        return bool(repo.get("is_hardened"))
-
-    @property
-    def icon(self) -> str:
-        return "mdi:security" if self.is_on else "mdi:security-off"
+        return "mdi:calendar-lock"
 
 
 class VeeamRepositoryAccessibleSensor(VeeamRepositoryBinarySensorBase):
