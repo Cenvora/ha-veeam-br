@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Připojit k Veeam Backup & Replication",
+        "description": "Zadejte podrobnosti serveru Veeam Backup & Replication.",
+        "data": {
+          "host": "Hostitel",
+          "port": "Port",
+          "username": "Uživatelské jméno",
+          "password": "Heslo",
+          "verify_ssl": "Ověřit certifikát SSL",
+          "api_version": "Verze API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Připojení k serveru Veeam selhalo",
+      "invalid_auth": "Neplatné přihlašovací údaje",
+      "unknown": "Došlo k neočekávané chybě"
+    },
+    "abort": {
+      "already_configured": "Tento server Veeam je již nakonfigurován"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Možnosti Veeam Backup & Replication",
+        "description": "Nakonfigurujte nastavení integrace Veeam Backup & Replication.",
+        "data": {
+          "api_version": "Verze API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Připojení k serveru Veeam selhalo",
+      "invalid_auth": "Neplatné přihlašovací údaje",
+      "unknown": "Došlo k neočekávané chybě"
+    }
+  }
+}
