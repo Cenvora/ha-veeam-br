@@ -151,7 +151,7 @@ class VeeamJobBaseSensor(CoordinatorEntity, SensorEntity):
         """Return device info for this job."""
         return {
             "identifiers": {(DOMAIN, f"job_{self._job_id}")},
-            "name": f"Job - {self._job_name}",
+            "name": f"{self._job_name}",
             "manufacturer": "Veeam",
             "model": "Backup Job",
         }
@@ -623,7 +623,7 @@ class VeeamRepositoryBaseSensor(CoordinatorEntity, SensorEntity):
         """Return device info for this repository."""
         return {
             "identifiers": {(DOMAIN, f"repository_{self._repo_id}")},
-            "name": f"Repository - {self._repo_name}",
+            "name": f"{self._repo_name}",
             "manufacturer": "Veeam",
             "model": "Backup Repository",
         }
