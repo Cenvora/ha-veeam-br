@@ -48,6 +48,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         get_all_repositories = importlib.import_module(
             f"veeam_br.{api_module}.api.repositories.get_all_repositories"
         )
+        get_all_repositories_states = importlib.import_module(
+            f"veeam_br.{api_module}.api.repositories.get_all_repositories_states"
+        )
         # Import UNSET type for proper type checking
         types_module = importlib.import_module(f"veeam_br.{api_module}.types")
         UNSET = types_module.UNSET
@@ -97,6 +100,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             def _get_repositories():
                 return get_all_repositories.sync_detailed(
+                    client=client,
+                    x_api_version=api_version,
+                )
+
+            def _get_repositories_states():
+                return get_all_repositories_states.sync_detailed(
                     client=client,
                     x_api_version=api_version,
                 )
@@ -236,53 +245,71 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Fetch repositories information
             repositories_list = []
             try:
+                # Helper to safely get UUID as string
+                def get_uuid_value(uuid_val):
+                    """Extract UUID value."""
+                    if uuid_val is None or uuid_val is UNSET:
+                        return None
+                    return str(uuid_val)
+
+                # Helper to serialize nested objects to dict
+                def serialize_value(value):
+                    """Recursively serialize values to JSON-compatible types."""
+                    if value is None or value is UNSET:
+                        return None
+                    if isinstance(value, (str, int, float, bool)):
+                        return value
+                    if isinstance(value, dict):
+                        return {k: serialize_value(v) for k, v in value.items()}
+                    if isinstance(value, (list, tuple)):
+                        return [serialize_value(item) for item in value]
+                    # Handle objects with to_dict method
+                    if hasattr(value, "to_dict"):
+                        return value.to_dict()
+                    # Handle enum types
+                    if hasattr(value, "value"):
+                        return value.value
+                    # Convert remaining types to string as fallback
+                    try:
+                        str_value = str(value)
+                        _LOGGER.debug(
+                            "Serialized unexpected type %s to string: %s",
+                            type(value).__name__,
+                            str_value[:50],
+                        )
+                        return str_value
+                    except Exception as err:
+                        _LOGGER.warning(
+                            "Failed to serialize value of type %s: %s",
+                            type(value).__name__,
+                            err,
+                        )
+                        return None
+
                 repositories_response = await hass.async_add_executor_job(_get_repositories)
+                repositories_states_response = await hass.async_add_executor_job(
+                    _get_repositories_states
+                )
+
                 if repositories_response.status_code == 200 and repositories_response.parsed:
                     repositories_result = repositories_response.parsed
                     repositories_data = repositories_result.data if repositories_result else []
 
                     _LOGGER.debug("Fetched %d repositories from API", len(repositories_data))
 
-                    # Helper to safely get UUID as string
-                    def get_uuid_value(uuid_val):
-                        """Extract UUID value."""
-                        if uuid_val is None or uuid_val is UNSET:
-                            return None
-                        return str(uuid_val)
-
-                    # Helper to serialize nested objects to dict
-                    def serialize_value(value):
-                        """Recursively serialize values to JSON-compatible types."""
-                        if value is None or value is UNSET:
-                            return None
-                        if isinstance(value, (str, int, float, bool)):
-                            return value
-                        if isinstance(value, dict):
-                            return {k: serialize_value(v) for k, v in value.items()}
-                        if isinstance(value, (list, tuple)):
-                            return [serialize_value(item) for item in value]
-                        # Handle objects with to_dict method
-                        if hasattr(value, "to_dict"):
-                            return value.to_dict()
-                        # Handle enum types
-                        if hasattr(value, "value"):
-                            return value.value
-                        # Convert remaining types to string as fallback
-                        try:
-                            str_value = str(value)
-                            _LOGGER.debug(
-                                "Serialized unexpected type %s to string: %s",
-                                type(value).__name__,
-                                str_value[:50],
-                            )
-                            return str_value
-                        except Exception as err:
-                            _LOGGER.warning(
-                                "Failed to serialize value of type %s: %s",
-                                type(value).__name__,
-                                err,
-                            )
-                            return None
+                    # Build states dict for quick lookup by ID
+                    states_by_id = {}
+                    if (
+                        repositories_states_response.status_code == 200
+                        and repositories_states_response.parsed
+                    ):
+                        states_result = repositories_states_response.parsed
+                        states_data = states_result.data if states_result else []
+                        for state in states_data:
+                            repo_id = get_uuid_value(getattr(state, "id", None))
+                            if repo_id:
+                                states_by_id[repo_id] = state
+                        _LOGGER.debug("Fetched %d repository states from API", len(states_by_id))
 
                     for repo in repositories_data:
                         try:
@@ -295,6 +322,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                     repo.unique_id if repo.unique_id is not UNSET else None
                                 ),
                             }
+
+                            # Add state information if available
+                            repo_id = repo_dict["id"]
+                            if repo_id in states_by_id:
+                                state = states_by_id[repo_id]
+                                # Add capacity information
+                                repo_dict["capacity_gb"] = getattr(state, "capacity_gb", None)
+                                repo_dict["free_gb"] = getattr(state, "free_gb", None)
+                                repo_dict["used_space_gb"] = getattr(state, "used_space_gb", None)
+                                repo_dict["is_online"] = getattr(state, "is_online", None)
+                                repo_dict["is_out_of_date"] = getattr(state, "is_out_of_date", None)
 
                             # Add all additional properties from the API response
                             if hasattr(repo, "additional_properties"):

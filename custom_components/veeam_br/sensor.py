@@ -70,6 +70,9 @@ async def async_setup_entry(
                     VeeamRepositoryCapacitySensor(coordinator, entry, repository),
                     VeeamRepositoryFreeSpaceSensor(coordinator, entry, repository),
                     VeeamRepositoryUsedSpaceSensor(coordinator, entry, repository),
+                    VeeamRepositoryUsedSpacePercentSensor(coordinator, entry, repository),
+                    VeeamRepositoryOnlineStatusSensor(coordinator, entry, repository),
+                    VeeamRepositoryOutOfDateSensor(coordinator, entry, repository),
                 ]
             )
             added_repository_ids.add(repo_id)
@@ -694,14 +697,7 @@ class VeeamRepositoryCapacitySensor(VeeamRepositoryBaseSensor):
         repo = self._repository()
         if not repo:
             return None
-        # Try to get capacity from additional_properties or direct fields
-        capacity = repo.get("capacity") or repo.get("totalSpace")
-        if capacity is not None:
-            # Convert bytes to GB if needed
-            if isinstance(capacity, (int, float)):
-                # Assume it's in bytes, convert to GB
-                return round(capacity / (1024**3), 2)
-        return None
+        return repo.get("capacity_gb")
 
     @property
     def icon(self) -> str:
@@ -725,14 +721,7 @@ class VeeamRepositoryFreeSpaceSensor(VeeamRepositoryBaseSensor):
         repo = self._repository()
         if not repo:
             return None
-        # Try to get free space from additional_properties or direct fields
-        free_space = repo.get("freeSpace") or repo.get("free_space")
-        if free_space is not None:
-            # Convert bytes to GB if needed
-            if isinstance(free_space, (int, float)):
-                # Assume it's in bytes, convert to GB
-                return round(free_space / (1024**3), 2)
-        return None
+        return repo.get("free_gb")
 
     @property
     def icon(self) -> str:
@@ -756,21 +745,98 @@ class VeeamRepositoryUsedSpaceSensor(VeeamRepositoryBaseSensor):
         repo = self._repository()
         if not repo:
             return None
-        # Try to get used space from additional_properties or direct fields
-        used_space = repo.get("usedSpace") or repo.get("used_space")
-        if used_space is not None:
-            # Convert bytes to GB if needed
-            if isinstance(used_space, (int, float)):
-                # Assume it's in bytes, convert to GB
-                return round(used_space / (1024**3), 2)
-        # Try to calculate from capacity - free
-        capacity = repo.get("capacity") or repo.get("totalSpace")
-        free_space = repo.get("freeSpace") or repo.get("free_space")
-        if capacity is not None and free_space is not None:
-            if isinstance(capacity, (int, float)) and isinstance(free_space, (int, float)):
-                return round((capacity - free_space) / (1024**3), 2)
-        return None
+        return repo.get("used_space_gb")
 
     @property
     def icon(self) -> str:
         return "mdi:database-alert"
+
+
+class VeeamRepositoryUsedSpacePercentSensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Used Space Percentage."""
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_repository_{self._repo_id}_used_space_percent"
+        )
+        self._attr_name = "Used Space"
+        self._attr_entity_category = None
+        self._attr_native_unit_of_measurement = "%"
+        self._attr_suggested_display_precision = 1
+
+    @property
+    def native_value(self) -> float | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        capacity = repo.get("capacity_gb")
+        used = repo.get("used_space_gb")
+        if capacity and capacity > 0 and used is not None:
+            return round((used / capacity) * 100, 1)
+        return None
+
+    @property
+    def icon(self) -> str:
+        value = self.native_value
+        if value is None:
+            return "mdi:percent"
+        if value >= 90:
+            return "mdi:alert-circle"
+        if value >= 75:
+            return "mdi:alert"
+        return "mdi:chart-arc"
+
+
+class VeeamRepositoryOnlineStatusSensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Online Status."""
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_is_online"
+        self._attr_name = "Online"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        is_online = repo.get("is_online")
+        if is_online is None:
+            return "Unknown"
+        return "Online" if is_online else "Offline"
+
+    @property
+    def icon(self) -> str:
+        repo = self._repository()
+        if repo and repo.get("is_online") is True:
+            return "mdi:check-network"
+        return "mdi:close-network"
+
+
+class VeeamRepositoryOutOfDateSensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Out of Date Status."""
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_is_out_of_date"
+        self._attr_name = "Out of Date"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        is_out_of_date = repo.get("is_out_of_date")
+        if is_out_of_date is None:
+            return "Unknown"
+        return "Yes" if is_out_of_date else "No"
+
+    @property
+    def icon(self) -> str:
+        repo = self._repository()
+        if repo and repo.get("is_out_of_date") is True:
+            return "mdi:alert-circle"
+        return "mdi:check-circle"
