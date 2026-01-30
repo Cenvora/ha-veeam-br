@@ -513,12 +513,8 @@ class VeeamServerHealthOkSensor(VeeamServerBinarySensorBase):
 
     @property
     def is_on(self) -> bool | None:
-        if not self.coordinator.data:
-            return None
-        diagnostics = self.coordinator.data.get("diagnostics")
-        if not diagnostics:
-            return None
-        return bool(diagnostics.get("health_ok"))
+        # Health reflects the current update status
+        return self.coordinator.last_update_success
 
 
 class VeeamServerConnectedSensor(VeeamServerBinarySensorBase):
@@ -534,12 +530,8 @@ class VeeamServerConnectedSensor(VeeamServerBinarySensorBase):
 
     @property
     def is_on(self) -> bool | None:
-        if not self.coordinator.data:
-            return None
-        diagnostics = self.coordinator.data.get("diagnostics")
-        if not diagnostics:
-            return None
-        return bool(diagnostics.get("connected"))
+        # Connection status reflects the current update status
+        return self.coordinator.last_update_success
 
 
 # ===========================

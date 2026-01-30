@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 import importlib
 import logging
 
@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
     API_VERSIONS,
@@ -371,7 +372,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             # Update diagnostic values - successful poll
             health_ok = True
-            last_successful_poll = datetime.now()
+            last_successful_poll = dt_util.now()
 
             return {
                 "jobs": jobs_list,
@@ -386,6 +387,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             }
 
         except Exception as err:
+            # When an update fails, the coordinator retains the last successful data,
+            # so diagnostic sensors will continue to show the last successful poll time
             raise UpdateFailed(f"Error communicating with API: {err}") from err
 
     coordinator = DataUpdateCoordinator(
