@@ -102,7 +102,7 @@ automation:
       - service: notify.notify
         data:
           title: "Veeam Backup Failed"
-          message: "Backup job {{ trigger.to_state.name }} has failed!"
+          message: "Backup job {{ trigger.to_state.name | replace(' Status', '') }} has failed!"
 ```
 
 ### Daily Backup Status Report
@@ -118,12 +118,13 @@ automation:
         data:
           title: "Veeam Backup Status"
           message: >
-            {% set status_sensors = states.sensor 
-               | selectattr('entity_id', 'search', '_status$') 
-               | list %}
-            {% for sensor in status_sensors %}
-              {{ sensor.name | replace(' Status', '') }}: {{ sensor.state }}
+            {% set ns = namespace(jobs=[]) %}
+            {% for sensor in states.sensor %}
+              {% if sensor.entity_id.endswith('_status') and device_attr(sensor.entity_id, 'manufacturer') == 'Veeam' and device_attr(sensor.entity_id, 'model') == 'Backup Job' %}
+                {% set ns.jobs = ns.jobs + [sensor.name | replace(' Status', '') ~ ': ' ~ sensor.state] %}
+              {% endif %}
             {% endfor %}
+            {{ ns.jobs | join('\n') }}
 ```
 
 ## Support
