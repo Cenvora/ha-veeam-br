@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connetti a Veeam Backup & Replication",
+        "description": "Inserisci i dettagli del tuo server Veeam Backup & Replication.",
+        "data": {
+          "host": "Host",
+          "port": "Porta",
+          "username": "Nome utente",
+          "password": "Password",
+          "verify_ssl": "Verifica certificato SSL",
+          "api_version": "Versione API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Connessione al server Veeam non riuscita",
+      "invalid_auth": "Credenziali di autenticazione non valide",
+      "unknown": "Si è verificato un errore imprevisto"
+    },
+    "abort": {
+      "already_configured": "Questo server Veeam è già configurato"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni Veeam Backup & Replication",
+        "description": "Configura le impostazioni dell'integrazione Veeam Backup & Replication.",
+        "data": {
+          "api_version": "Versione API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Connessione al server Veeam non riuscita",
+      "invalid_auth": "Credenziali di autenticazione non valide",
+      "unknown": "Si è verificato un errore imprevisto"
+    }
+  }
+}

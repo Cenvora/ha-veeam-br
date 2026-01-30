@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Подключение к Veeam Backup & Replication",
+        "description": "Введите данные вашего сервера Veeam Backup & Replication.",
+        "data": {
+          "host": "Хост",
+          "port": "Порт",
+          "username": "Имя пользователя",
+          "password": "Пароль",
+          "verify_ssl": "Проверять SSL-сертификат",
+          "api_version": "Версия API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к серверу Veeam",
+      "invalid_auth": "Неверные учетные данные",
+      "unknown": "Произошла непредвиденная ошибка"
+    },
+    "abort": {
+      "already_configured": "Этот сервер Veeam уже настроен"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Параметры Veeam Backup & Replication",
+        "description": "Настройте параметры интеграции Veeam Backup & Replication.",
+        "data": {
+          "api_version": "Версия API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к серверу Veeam",
+      "invalid_auth": "Неверные учетные данные",
+      "unknown": "Произошла непредвиденная ошибка"
+    }
+  }
+}

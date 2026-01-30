@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Połącz z Veeam Backup & Replication",
+        "description": "Wprowadź szczegóły serwera Veeam Backup & Replication.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Nazwa użytkownika",
+          "password": "Hasło",
+          "verify_ssl": "Weryfikuj certyfikat SSL",
+          "api_version": "Wersja API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Nie udało się połączyć z serwerem Veeam",
+      "invalid_auth": "Nieprawidłowe dane uwierzytelniające",
+      "unknown": "Wystąpił nieoczekiwany błąd"
+    },
+    "abort": {
+      "already_configured": "Ten serwer Veeam jest już skonfigurowany"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opcje Veeam Backup & Replication",
+        "description": "Skonfiguruj ustawienia integracji Veeam Backup & Replication.",
+        "data": {
+          "api_version": "Wersja API"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Nie udało się połączyć z serwerem Veeam",
+      "invalid_auth": "Nieprawidłowe dane uwierzytelniające",
+      "unknown": "Wystąpił nieoczekiwany błąd"
+    }
+  }
+}
