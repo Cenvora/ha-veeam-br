@@ -138,14 +138,15 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
                 # Import the body model for the rescan request
                 try:
                     models_module = importlib.import_module(
-                        f"veeam_br.{api_module}.models.rescan_repositories_request_model"
+                        f"veeam_br.{api_module}.models.repositories_rescan_spec"
                     )
-                    RescanModel = models_module.RescanRepositoriesRequestModel
-                    body = RescanModel(repository_ids=[self._repo_id])
-                except (ImportError, AttributeError):
-                    # Fallback: try passing as dict if model not found
-                    _LOGGER.warning("RescanRepositoriesRequestModel not found, using dict body")
-                    body = {"repositoryIds": [self._repo_id]}
+                    RepositoriesRescanSpec = models_module.RepositoriesRescanSpec
+                    body = RepositoriesRescanSpec(repository_ids=[self._repo_id])
+                except (ImportError, AttributeError) as e:
+                    _LOGGER.error(
+                        "Failed to import RepositoriesRescanSpec: %s. Cannot rescan repository.", e
+                    )
+                    return None
 
                 return rescan_repositories.sync_detailed(
                     client=client,
@@ -154,6 +155,10 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
                 )
 
             response = await self.hass.async_add_executor_job(_rescan)
+
+            if response is None:
+                _LOGGER.error("Failed to create rescan request for repository: %s", self._repo_name)
+                return
 
             if response.status_code in (200, 202, 204):
                 _LOGGER.info("Successfully triggered rescan for repository: %s", self._repo_name)
