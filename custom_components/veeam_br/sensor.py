@@ -93,6 +93,9 @@ async def async_setup_entry(
                     VeeamServerDatabaseVendorSensor(coordinator, entry),
                     VeeamServerSQLEditionSensor(coordinator, entry),
                     VeeamServerSQLVersionSensor(coordinator, entry),
+                    VeeamServerHealthOkSensor(coordinator, entry),
+                    VeeamServerLastSuccessfulPollSensor(coordinator, entry),
+                    VeeamServerConnectedSensor(coordinator, entry),
                 ]
             )
             server_added = True
@@ -448,6 +451,95 @@ class VeeamServerSQLVersionSensor(VeeamServerBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:database-check"
+
+
+class VeeamServerLastSuccessfulPollSensor(VeeamServerBaseSensor):
+    """Sensor for Veeam Server Last Successful Poll."""
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_server_last_successful_poll"
+        self._attr_name = "Last Successful Poll"
+        self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self):
+        if not self.coordinator.data:
+            return None
+        diagnostics = self.coordinator.data.get("diagnostics")
+        return diagnostics.get("last_successful_poll") if diagnostics else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:clock-check"
+
+
+class VeeamServerBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
+    """Base class for Veeam Server binary sensors."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+
+    def _server_info(self) -> dict[str, Any] | None:
+        return self.coordinator.data.get("server_info") if self.coordinator.data else None
+
+    @property
+    def device_info(self):
+        """Return device info for the Veeam server."""
+        server_info = self._server_info()
+        server_name = server_info.get("name", "Unknown") if server_info else "Unknown"
+        return {
+            "identifiers": {(DOMAIN, f"server_{self._config_entry.entry_id}")},
+            "name": f"{server_name}",
+            "manufacturer": "Veeam",
+            "model": "Backup & Replication Server",
+        }
+
+
+class VeeamServerHealthOkSensor(VeeamServerBinarySensorBase):
+    """Binary sensor for Veeam Server Health."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_server_health_ok"
+        self._attr_name = "Health OK"
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.coordinator.data:
+            return None
+        diagnostics = self.coordinator.data.get("diagnostics")
+        if not diagnostics:
+            return None
+        return bool(diagnostics.get("health_ok"))
+
+
+class VeeamServerConnectedSensor(VeeamServerBinarySensorBase):
+    """Binary sensor for Veeam Server Connection Status."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_server_connected"
+        self._attr_name = "Connected"
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.coordinator.data:
+            return None
+        diagnostics = self.coordinator.data.get("diagnostics")
+        if not diagnostics:
+            return None
+        return bool(diagnostics.get("connected"))
 
 
 # ===========================
