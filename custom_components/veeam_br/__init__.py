@@ -353,22 +353,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 ):
                                     immutability = bucket.immutability
                                     # Extract immutability enabled status
-                                    is_enabled = getattr(immutability, "is_enabled", None)
-                                    repo_dict["is_immutable"] = is_enabled
-                                    _LOGGER.debug(
-                                        "Repository %s immutability: is_enabled=%s",
-                                        repo_dict.get("name"),
-                                        is_enabled,
-                                    )
-                                    # Extract immutability days count if enabled
-                                    if is_enabled:
-                                        days_count = getattr(immutability, "days_count", None)
-                                        repo_dict["immutability_days"] = days_count
+                                    # Check for UNSET since attrs models use UNSET instead of None
+                                    is_enabled = getattr(immutability, "is_enabled", UNSET)
+                                    if is_enabled is not UNSET:
+                                        repo_dict["is_immutable"] = is_enabled
                                         _LOGGER.debug(
-                                            "Repository %s immutability_days=%s",
+                                            "Repository %s immutability: is_enabled=%s",
                                             repo_dict.get("name"),
-                                            days_count,
+                                            is_enabled,
                                         )
+                                        # Extract immutability days count if enabled
+                                        if is_enabled:
+                                            days_count = getattr(immutability, "days_count", UNSET)
+                                            if days_count is not UNSET:
+                                                repo_dict["immutability_days"] = days_count
+                                                _LOGGER.debug(
+                                                    "Repository %s immutability_days=%s",
+                                                    repo_dict.get("name"),
+                                                    days_count,
+                                                )
 
                             # Accessible - use is_online from state as a proxy
                             repo_dict["is_accessible"] = repo_dict.get("is_online")
