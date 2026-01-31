@@ -59,7 +59,8 @@
     },
     "abort": {
       "already_configured": "Deze Veeam-server is al geconfigureerd",
-      "reauth_successful": "Herverificatie is gelukt"
+      "reauth_successful": "Herverificatie is gelukt",
+      "reconfigure_successful": "Herconfiguratie is gelukt"
     }
   },
   "options": {

@@ -59,7 +59,8 @@
     },
     "abort": {
       "already_configured": "此 Veeam 服务器已配置",
-      "reauth_successful": "重新验证成功"
+      "reauth_successful": "重新验证成功",
+      "reconfigure_successful": "重新配置成功"
     }
   },
   "options": {

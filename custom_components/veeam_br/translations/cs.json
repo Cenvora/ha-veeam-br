@@ -59,7 +59,8 @@
     },
     "abort": {
       "already_configured": "Tento server Veeam je již nakonfigurován",
-      "reauth_successful": "Opětovné ověření bylo úspěšné"
+      "reauth_successful": "Opětovné ověření bylo úspěšné",
+      "reconfigure_successful": "Překonfigurování bylo úspěšné"
     }
   },
   "options": {

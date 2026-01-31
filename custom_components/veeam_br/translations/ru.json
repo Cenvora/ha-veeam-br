@@ -59,7 +59,8 @@
     },
     "abort": {
       "already_configured": "Этот сервер Veeam уже настроен",
-      "reauth_successful": "Повторная аутентификация прошла успешно"
+      "reauth_successful": "Повторная аутентификация прошла успешно",
+      "reconfigure_successful": "Реконфигурация прошла успешно"
     }
   },
   "options": {

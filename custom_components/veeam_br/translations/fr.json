@@ -59,7 +59,8 @@
     },
     "abort": {
       "already_configured": "Ce serveur Veeam est déjà configuré",
-      "reauth_successful": "La réauthentification a réussi"
+      "reauth_successful": "La réauthentification a réussi",
+      "reconfigure_successful": "La reconfiguration a réussi"
     }
   },
   "options": {
