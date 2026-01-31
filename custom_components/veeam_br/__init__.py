@@ -260,7 +260,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     # Build states dict for quick lookup by ID
                     states_by_id = {}
                     if repositories_states_result:
-                        states_data = repositories_states_result.data if repositories_states_result else []
+                        states_data = (
+                            repositories_states_result.data if repositories_states_result else []
+                        )
                         for state in states_data:
                             repo_id = get_uuid_value(getattr(state, "id", None))
                             if repo_id:
