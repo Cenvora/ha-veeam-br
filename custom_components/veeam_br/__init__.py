@@ -345,51 +345,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                             # Extract repository-specific fields from the repo object
                             # Immutability - from bucket.immutability for S3 repos
-                            _LOGGER.info(
-                                "Repository %s: Checking for bucket (has bucket attr=%s, bucket is UNSET=%s)",
-                                repo_dict.get("name"),
-                                hasattr(repo, "bucket"),
-                                repo.bucket is UNSET if hasattr(repo, "bucket") else "N/A",
-                            )
-                            if hasattr(repo, "bucket") and repo.bucket is not UNSET:
-                                bucket = repo.bucket
+                            # Due to circular inheritance in OpenAPI schema, bucket is in additional_properties
+                            if hasattr(repo, "additional_properties"):
+                                bucket = repo.additional_properties.get("bucket")
                                 _LOGGER.debug(
-                                    "Repository %s: bucket found, checking immutability",
+                                    "Repository %s: Checking additional_properties, bucket found=%s",
                                     repo_dict.get("name"),
+                                    bucket is not None,
                                 )
-                                if (
-                                    hasattr(bucket, "immutability")
-                                    and bucket.immutability is not UNSET
-                                ):
-                                    immutability = bucket.immutability
-                                    # Extract immutability enabled status
-                                    # Check for UNSET since attrs models use UNSET instead of None
-                                    is_enabled = getattr(immutability, "is_enabled", UNSET)
-                                    _LOGGER.debug(
-                                        "Repository %s: immutability.is_enabled=%s (type=%s, is UNSET=%s)",
-                                        repo_dict.get("name"),
-                                        is_enabled,
-                                        type(is_enabled).__name__,
-                                        is_enabled is UNSET,
-                                    )
-                                    if is_enabled is not UNSET:
-                                        # Ensure we store the boolean value, not the UNSET sentinel
-                                        repo_dict["is_immutable"] = bool(is_enabled)
-                                        _LOGGER.info(
-                                            "Repository %s: Set is_immutable=%s",
+                                if bucket:
+                                    # bucket is a dict from additional_properties
+                                    immutability = bucket.get("immutability")
+                                    if immutability:
+                                        _LOGGER.debug(
+                                            "Repository %s: immutability found in bucket",
                                             repo_dict.get("name"),
-                                            repo_dict["is_immutable"],
                                         )
-                                        # Extract immutability days count if enabled
-                                        if is_enabled:
-                                            days_count = getattr(immutability, "days_count", UNSET)
-                                            if days_count is not UNSET:
-                                                repo_dict["immutability_days"] = days_count
-                                                _LOGGER.debug(
-                                                    "Repository %s immutability_days=%s",
-                                                    repo_dict.get("name"),
-                                                    days_count,
-                                                )
+                                        # immutability is a dict with isEnabled, daysCount, immutabilityMode
+                                        is_enabled = immutability.get("isEnabled")
+                                        if is_enabled is not None:
+                                            repo_dict["is_immutable"] = bool(is_enabled)
+                                            _LOGGER.info(
+                                                "Repository %s: Set is_immutable=%s",
+                                                repo_dict.get("name"),
+                                                repo_dict["is_immutable"],
+                                            )
+                                            # Extract immutability days count if enabled
+                                            if is_enabled:
+                                                days_count = immutability.get("daysCount")
+                                                if days_count is not None:
+                                                    repo_dict["immutability_days"] = days_count
+                                                    _LOGGER.debug(
+                                                        "Repository %s: immutability_days=%s",
+                                                        repo_dict.get("name"),
+                                                        days_count,
+                                                    )
 
                             # Accessible - use is_online from state as a proxy
                             repo_dict["is_accessible"] = repo_dict.get("is_online")
