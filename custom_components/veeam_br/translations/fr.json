@@ -11,6 +11,44 @@
           "password": "Mot de passe",
           "verify_ssl": "Vérifier le certificat SSL",
           "api_version": "Version de l'API"
+        },
+        "data_description": {
+          "host": "Nom d'hôte ou adresse IP du serveur Veeam Backup & Replication",
+          "port": "Port de l'API REST (par défaut : 9419)",
+          "username": "Nom d'utilisateur avec privilèges administrateur",
+          "password": "Mot de passe du compte utilisateur spécifié",
+          "verify_ssl": "Activer la vérification du certificat SSL (désactiver uniquement pour les certificats auto-signés)",
+          "api_version": "Version de l'API REST Veeam à utiliser"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigurer Veeam Backup & Replication",
+        "description": "Mettez à jour les détails de connexion pour {host}.",
+        "data": {
+          "host": "Hôte",
+          "port": "Port",
+          "username": "Nom d'utilisateur",
+          "password": "Mot de passe",
+          "verify_ssl": "Vérifier le certificat SSL"
+        },
+        "data_description": {
+          "host": "Nom d'hôte ou adresse IP du serveur Veeam",
+          "port": "Port de l'API REST",
+          "username": "Nom d'utilisateur administrateur",
+          "password": "Mot de passe utilisateur",
+          "verify_ssl": "Vérifier les certificats SSL"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Se réauthentifier à Veeam Backup & Replication",
+        "description": "Les informations d'authentification pour {host} ne sont plus valides. Veuillez entrer de nouvelles informations d'identification.",
+        "data": {
+          "username": "Nom d'utilisateur",
+          "password": "Mot de passe"
+        },
+        "data_description": {
+          "username": "Nom d'utilisateur administrateur",
+          "password": "Mot de passe utilisateur"
         }
       }
     },
@@ -20,7 +58,8 @@
       "unknown": "Une erreur inattendue s'est produite"
     },
     "abort": {
-      "already_configured": "Ce serveur Veeam est déjà configuré"
+      "already_configured": "Ce serveur Veeam est déjà configuré",
+      "reauth_successful": "La réauthentification a réussi"
     }
   },
   "options": {
@@ -30,6 +69,9 @@
         "description": "Configurez les paramètres de l'intégration Veeam Backup & Replication.",
         "data": {
           "api_version": "Version de l'API"
+        },
+        "data_description": {
+          "api_version": "Sélectionnez la version de l'API REST Veeam pour cette intégration"
         }
       }
     },
@@ -37,6 +79,174 @@
       "cannot_connect": "Échec de la connexion au serveur Veeam",
       "invalid_auth": "Identifiants d'authentification invalides",
       "unknown": "Une erreur inattendue s'est produite"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "job_status": {
+        "name": "Statut"
+      },
+      "job_type": {
+        "name": "Type"
+      },
+      "job_last_run": {
+        "name": "Dernière exécution"
+      },
+      "job_next_run": {
+        "name": "Prochaine exécution"
+      },
+      "job_last_result": {
+        "name": "Dernier résultat"
+      },
+      "server_build_version": {
+        "name": "Version de build"
+      },
+      "server_name": {
+        "name": "Nom du serveur"
+      },
+      "server_platform": {
+        "name": "Plateforme"
+      },
+      "server_database_vendor": {
+        "name": "Fournisseur de base de données"
+      },
+      "server_sql_edition": {
+        "name": "Édition SQL Server"
+      },
+      "server_sql_version": {
+        "name": "Version SQL Server"
+      },
+      "server_last_poll": {
+        "name": "Dernière interrogation réussie"
+      },
+      "license_status": {
+        "name": "Statut"
+      },
+      "license_edition": {
+        "name": "Édition"
+      },
+      "license_type": {
+        "name": "Type"
+      },
+      "license_expiration": {
+        "name": "Date d'expiration"
+      },
+      "license_support_expiration": {
+        "name": "Date d'expiration du support"
+      },
+      "license_licensed_to": {
+        "name": "Sous licence de"
+      },
+      "license_support_id": {
+        "name": "ID de support"
+      },
+      "license_auto_update": {
+        "name": "Mise à jour automatique activée"
+      },
+      "license_cloud_connect": {
+        "name": "Licence Cloud Connect"
+      },
+      "repository_type": {
+        "name": "Type"
+      },
+      "repository_capacity": {
+        "name": "Capacité"
+      },
+      "repository_free_space": {
+        "name": "Espace libre"
+      },
+      "repository_used_space": {
+        "name": "Espace utilisé"
+      },
+      "sobr_description": {
+        "name": "Description"
+      },
+      "sobr_extent_count": {
+        "name": "Nombre d'extents"
+      }
+    },
+    "binary_sensor": {
+      "server_health_ok": {
+        "name": "Santé OK"
+      },
+      "server_connected": {
+        "name": "Connecté"
+      },
+      "repository_online": {
+        "name": "En ligne"
+      },
+      "sobr_extent_sealed": {
+        "name": "{extent_name} mode scellé"
+      },
+      "sobr_extent_maintenance": {
+        "name": "{extent_name} mode maintenance"
+      }
+    },
+    "button": {
+      "repository_rescan": {
+        "name": "Réanalyser le référentiel"
+      },
+      "sobr_extent_enable_sealed": {
+        "name": "{extent_name} activer le mode scellé"
+      },
+      "sobr_extent_disable_sealed": {
+        "name": "{extent_name} désactiver le mode scellé"
+      },
+      "sobr_extent_enable_maintenance": {
+        "name": "{extent_name} activer le mode maintenance"
+      },
+      "sobr_extent_disable_maintenance": {
+        "name": "{extent_name} désactiver le mode maintenance"
+      }
+    }
+  },
+  "exceptions": {
+    "connection_error": {
+      "message": "Échec de la connexion au serveur Veeam à {host}:{port}"
+    },
+    "authentication_failed": {
+      "message": "Échec de l'authentification pour l'utilisateur {username}"
+    },
+    "api_error": {
+      "message": "Erreur de l'API Veeam : {error}"
+    },
+    "repository_rescan_failed": {
+      "message": "Échec de la réanalyse du référentiel {repository_name} : {error}"
+    },
+    "extent_operation_failed": {
+      "message": "Échec de {operation} pour l'extent {extent_name} : {error}"
+    },
+    "timeout_error": {
+      "message": "La demande au serveur Veeam a expiré"
+    },
+    "invalid_response": {
+      "message": "Réponse invalide reçue du serveur Veeam"
+    }
+  },
+  "selector": {
+    "job_status": {
+      "options": {
+        "success": "Succès",
+        "running": "En cours",
+        "failed": "Échec",
+        "warning": "Avertissement",
+        "unknown": "Inconnu"
+      }
+    },
+    "job_last_result": {
+      "options": {
+        "success": "Succès",
+        "failed": "Échec",
+        "warning": "Avertissement",
+        "none": "Aucun"
+      }
+    },
+    "license_status": {
+      "options": {
+        "valid": "Valide",
+        "expired": "Expirée",
+        "invalid": "Invalide"
+      }
     }
   }
 }

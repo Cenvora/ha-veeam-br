@@ -3,24 +3,63 @@
     "step": {
       "user": {
         "title": "Připojit k Veeam Backup & Replication",
-        "description": "Zadejte podrobnosti serveru Veeam Backup & Replication.",
+        "description": "Zadejte údaje vašeho serveru Veeam Backup & Replication.",
         "data": {
-          "host": "Hostitel",
+          "host": "Host",
           "port": "Port",
           "username": "Uživatelské jméno",
           "password": "Heslo",
-          "verify_ssl": "Ověřit certifikát SSL",
+          "verify_ssl": "Ověřit SSL certifikát",
           "api_version": "Verze API"
+        },
+        "data_description": {
+          "host": "Název hostitele nebo IP adresa serveru Veeam Backup & Replication",
+          "port": "Port REST API (výchozí: 9419)",
+          "username": "Uživatelské jméno s administrátorskými oprávněními",
+          "password": "Heslo pro zadaný uživatelský účet",
+          "verify_ssl": "Povolit ověření SSL certifikátu (zakázat pouze pro sebepodepsané certifikáty)",
+          "api_version": "Verze REST API Veeam k použití"
+        }
+      },
+      "reconfigure": {
+        "title": "Překonfigurovat Veeam Backup & Replication",
+        "description": "Aktualizovat údaje připojení pro {host}.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Uživatelské jméno",
+          "password": "Heslo",
+          "verify_ssl": "Ověřit SSL certifikát"
+        },
+        "data_description": {
+          "host": "Název hostitele nebo IP adresa serveru Veeam",
+          "port": "Port REST API",
+          "username": "Administrátorské uživatelské jméno",
+          "password": "Heslo uživatele",
+          "verify_ssl": "Ověřit SSL certifikáty"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Znovu ověřit k Veeam Backup & Replication",
+        "description": "Přihlašovací údaje pro {host} již nejsou platné. Zadejte prosím nové přihlašovací údaje.",
+        "data": {
+          "username": "Uživatelské jméno",
+          "password": "Heslo"
+        },
+        "data_description": {
+          "username": "Administrátorské uživatelské jméno",
+          "password": "Heslo uživatele"
         }
       }
     },
     "error": {
-      "cannot_connect": "Připojení k serveru Veeam selhalo",
+      "cannot_connect": "Připojení k serveru Veeam se nezdařilo",
       "invalid_auth": "Neplatné přihlašovací údaje",
       "unknown": "Došlo k neočekávané chybě"
     },
     "abort": {
-      "already_configured": "Tento server Veeam je již nakonfigurován"
+      "already_configured": "Tento server Veeam je již nakonfigurován",
+      "reauth_successful": "Opětovné ověření bylo úspěšné"
     }
   },
   "options": {
@@ -30,13 +69,184 @@
         "description": "Nakonfigurujte nastavení integrace Veeam Backup & Replication.",
         "data": {
           "api_version": "Verze API"
+        },
+        "data_description": {
+          "api_version": "Vyberte verzi REST API Veeam pro tuto integraci"
         }
       }
     },
     "error": {
-      "cannot_connect": "Připojení k serveru Veeam selhalo",
+      "cannot_connect": "Připojení k serveru Veeam se nezdařilo",
       "invalid_auth": "Neplatné přihlašovací údaje",
       "unknown": "Došlo k neočekávané chybě"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "job_status": {
+        "name": "Stav"
+      },
+      "job_type": {
+        "name": "Typ"
+      },
+      "job_last_run": {
+        "name": "Poslední spuštění"
+      },
+      "job_next_run": {
+        "name": "Další spuštění"
+      },
+      "job_last_result": {
+        "name": "Poslední výsledek"
+      },
+      "server_build_version": {
+        "name": "Verze buildu"
+      },
+      "server_name": {
+        "name": "Název serveru"
+      },
+      "server_platform": {
+        "name": "Platforma"
+      },
+      "server_database_vendor": {
+        "name": "Dodavatel databáze"
+      },
+      "server_sql_edition": {
+        "name": "Edice SQL Server"
+      },
+      "server_sql_version": {
+        "name": "Verze SQL Server"
+      },
+      "server_last_poll": {
+        "name": "Poslední úspěšné dotazování"
+      },
+      "license_status": {
+        "name": "Stav"
+      },
+      "license_edition": {
+        "name": "Edice"
+      },
+      "license_type": {
+        "name": "Typ"
+      },
+      "license_expiration": {
+        "name": "Datum vypršení"
+      },
+      "license_support_expiration": {
+        "name": "Datum vypršení podpory"
+      },
+      "license_licensed_to": {
+        "name": "Licencováno pro"
+      },
+      "license_support_id": {
+        "name": "ID podpory"
+      },
+      "license_auto_update": {
+        "name": "Automatická aktualizace povolena"
+      },
+      "license_cloud_connect": {
+        "name": "Licence Cloud Connect"
+      },
+      "repository_type": {
+        "name": "Typ"
+      },
+      "repository_capacity": {
+        "name": "Kapacita"
+      },
+      "repository_free_space": {
+        "name": "Volné místo"
+      },
+      "repository_used_space": {
+        "name": "Využité místo"
+      },
+      "sobr_description": {
+        "name": "Popis"
+      },
+      "sobr_extent_count": {
+        "name": "Počet rozsahů"
+      }
+    },
+    "binary_sensor": {
+      "server_health_ok": {
+        "name": "Stav v pořádku"
+      },
+      "server_connected": {
+        "name": "Připojeno"
+      },
+      "repository_online": {
+        "name": "Online"
+      },
+      "sobr_extent_sealed": {
+        "name": "{extent_name} uzavřený režim"
+      },
+      "sobr_extent_maintenance": {
+        "name": "{extent_name} režim údržby"
+      }
+    },
+    "button": {
+      "repository_rescan": {
+        "name": "Znovu naskenovat úložiště"
+      },
+      "sobr_extent_enable_sealed": {
+        "name": "{extent_name} povolit uzavřený režim"
+      },
+      "sobr_extent_disable_sealed": {
+        "name": "{extent_name} zakázat uzavřený režim"
+      },
+      "sobr_extent_enable_maintenance": {
+        "name": "{extent_name} povolit režim údržby"
+      },
+      "sobr_extent_disable_maintenance": {
+        "name": "{extent_name} zakázat režim údržby"
+      }
+    }
+  },
+  "exceptions": {
+    "connection_error": {
+      "message": "Připojení k serveru Veeam na {host}:{port} se nezdařilo"
+    },
+    "authentication_failed": {
+      "message": "Ověření se nezdařilo pro uživatele {username}"
+    },
+    "api_error": {
+      "message": "Chyba Veeam API: {error}"
+    },
+    "repository_rescan_failed": {
+      "message": "Skenování úložiště {repository_name} se nezdařilo: {error}"
+    },
+    "extent_operation_failed": {
+      "message": "Operace {operation} pro rozsah {extent_name} se nezdařila: {error}"
+    },
+    "timeout_error": {
+      "message": "Vypršel časový limit požadavku na server Veeam"
+    },
+    "invalid_response": {
+      "message": "Obdržena neplatná odpověď ze serveru Veeam"
+    }
+  },
+  "selector": {
+    "job_status": {
+      "options": {
+        "success": "Úspěch",
+        "running": "Běží",
+        "failed": "Selhalo",
+        "warning": "Varování",
+        "unknown": "Neznámý"
+      }
+    },
+    "job_last_result": {
+      "options": {
+        "success": "Úspěch",
+        "failed": "Selhalo",
+        "warning": "Varování",
+        "none": "Žádný"
+      }
+    },
+    "license_status": {
+      "options": {
+        "valid": "Platná",
+        "expired": "Vypršela",
+        "invalid": "Neplatná"
+      }
     }
   }
 }
