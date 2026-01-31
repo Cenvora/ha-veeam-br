@@ -237,6 +237,7 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
 
         except Exception as err:
             _LOGGER.error("Error rescanning repository %s: %s", self._repo_name, err)
+            raise
 
 
 # ===========================
@@ -341,6 +342,7 @@ class VeeamSOBRExtentEnableSealedModeButton(VeeamSOBRExtentButtonBase):
                 self._sobr_name,
                 err,
             )
+            raise
 
 
 class VeeamSOBRExtentDisableSealedModeButton(VeeamSOBRExtentButtonBase):
@@ -413,6 +415,7 @@ class VeeamSOBRExtentDisableSealedModeButton(VeeamSOBRExtentButtonBase):
                 self._sobr_name,
                 err,
             )
+            raise
 
 
 class VeeamSOBRExtentEnableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
@@ -486,6 +489,7 @@ class VeeamSOBRExtentEnableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
                 self._sobr_name,
                 err,
             )
+            raise
 
 
 class VeeamSOBRExtentDisableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
@@ -561,6 +565,7 @@ class VeeamSOBRExtentDisableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
                 self._sobr_name,
                 err,
             )
+            raise
 
 
 # ===========================
