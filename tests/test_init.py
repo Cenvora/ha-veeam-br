@@ -14,7 +14,6 @@ from custom_components.veeam_br.const import (
     DEFAULT_API_VERSION,
     DEFAULT_PORT,
     DEFAULT_VERIFY_SSL,
-    DOMAIN,
 )
 
 
@@ -24,7 +23,7 @@ def mock_config_entry():
     return ConfigEntry(
         version=1,
         minor_version=1,
-        domain=DOMAIN,
+        domain="veeam_br",
         title="Veeam B&R (veeam.example.com)",
         data={
             CONF_HOST: "veeam.example.com",
@@ -123,10 +122,9 @@ async def test_setup_entry_success(hass: HomeAssistant, mock_config_entry, mock_
             result = await async_setup_entry(hass, mock_config_entry)
 
             assert result is True
-            assert DOMAIN in hass.data
-            assert mock_config_entry.entry_id in hass.data[DOMAIN]
-            assert "coordinator" in hass.data[DOMAIN][mock_config_entry.entry_id]
-            assert "veeam_client" in hass.data[DOMAIN][mock_config_entry.entry_id]
+            assert hasattr(mock_config_entry, "runtime_data")
+            assert "coordinator" in mock_config_entry.runtime_data
+            assert "veeam_client" in mock_config_entry.runtime_data
 
             # Verify client connection was called
             mock_client.connect.assert_called_once()
@@ -214,7 +212,6 @@ async def test_unload_entry(hass: HomeAssistant, mock_config_entry, mock_veeam_a
             result = await async_unload_entry(hass, mock_config_entry)
 
             assert result is True
-            assert mock_config_entry.entry_id not in hass.data[DOMAIN]
             mock_unload.assert_called_once()
 
 

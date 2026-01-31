@@ -12,6 +12,14 @@
           "verify_ssl": "Verify SSL Certificate",
           "api_version": "API Version"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate to Veeam Backup & Replication",
+        "description": "The authentication credentials for {host} are no longer valid. Please enter new credentials.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
     },
     "error": {
@@ -20,7 +28,8 @@
       "unknown": "Unexpected error occurred"
     },
     "abort": {
-      "already_configured": "This Veeam server is already configured"
+      "already_configured": "This Veeam server is already configured",
+      "reauth_successful": "Re-authentication was successful"
     }
   },
   "options": {

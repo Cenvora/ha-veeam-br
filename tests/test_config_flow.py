@@ -204,3 +204,90 @@ async def test_options_flow(hass, mock_veeam_client):
 
         assert result["type"] == FlowResultType.CREATE_ENTRY
         assert result["data"] == {CONF_API_VERSION: new_api_version}
+
+
+async def test_reauth_flow(hass, mock_veeam_client):
+    """Test reauth flow."""
+    # Create an existing entry
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.data = {
+        CONF_HOST: "veeam.example.com",
+        CONF_PORT: DEFAULT_PORT,
+        CONF_USERNAME: "admin",
+        CONF_PASSWORD: "old_password",
+        CONF_VERIFY_SSL: DEFAULT_VERIFY_SSL,
+        CONF_API_VERSION: DEFAULT_API_VERSION,
+    }
+
+    # Mock the reauth flow
+    from custom_components.veeam_br.config_flow import VeeamBRConfigFlow
+
+    flow = VeeamBRConfigFlow()
+    flow.hass = hass
+    flow.context = {"source": "reauth", "entry_id": entry.entry_id}
+
+    # Mock getting the reauth entry
+    with patch.object(flow, "_get_reauth_entry", return_value=entry):
+        # Initialize reauth flow
+        result = await flow.async_step_reauth_confirm()
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+
+        # Test successful reauth
+        with patch.object(
+            flow, "async_update_reload_and_abort"
+        ) as mock_update:
+            mock_update.return_value = {
+                "type": FlowResultType.ABORT,
+                "reason": "reauth_successful",
+            }
+
+            result = await flow.async_step_reauth_confirm(
+                user_input={
+                    CONF_USERNAME: "admin",
+                    CONF_PASSWORD: "new_password",
+                }
+            )
+
+            assert mock_update.called
+            # Verify the new password was used
+            call_args = mock_update.call_args
+            assert call_args[1]["data"][CONF_PASSWORD] == "new_password"
+
+
+async def test_reauth_flow_invalid_auth(hass, mock_veeam_client):
+    """Test reauth flow with invalid credentials."""
+    # Create an existing entry
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    entry.data = {
+        CONF_HOST: "veeam.example.com",
+        CONF_PORT: DEFAULT_PORT,
+        CONF_USERNAME: "admin",
+        CONF_PASSWORD: "old_password",
+        CONF_VERIFY_SSL: DEFAULT_VERIFY_SSL,
+        CONF_API_VERSION: DEFAULT_API_VERSION,
+    }
+
+    # Simulate authentication failure
+    mock_veeam_client.return_value.connect.side_effect = PermissionError("Invalid credentials")
+
+    from custom_components.veeam_br.config_flow import VeeamBRConfigFlow
+
+    flow = VeeamBRConfigFlow()
+    flow.hass = hass
+    flow.context = {"source": "reauth", "entry_id": entry.entry_id}
+
+    with patch.object(flow, "_get_reauth_entry", return_value=entry):
+        result = await flow.async_step_reauth_confirm(
+            user_input={
+                CONF_USERNAME: "admin",
+                CONF_PASSWORD: "wrong_password",
+            }
+        )
+
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "reauth_confirm"
+        assert result["errors"] == {"base": "invalid_auth"}

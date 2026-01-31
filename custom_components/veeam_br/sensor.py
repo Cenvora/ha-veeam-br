@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_API_VERSION, DEFAULT_API_VERSION, DOMAIN, check_api_feature_availability
+from .const import CONF_API_VERSION, DEFAULT_API_VERSION, check_api_feature_availability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data["coordinator"]
 
     added_job_ids: set[str] = set()
     added_repository_ids: set[str] = set()

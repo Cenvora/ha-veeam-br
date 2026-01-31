@@ -16,7 +16,6 @@ from .const import (
     API_VERSIONS,
     CONF_API_VERSION,
     DEFAULT_API_VERSION,
-    DOMAIN,
     check_api_feature_availability,
 )
 
@@ -29,8 +28,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Veeam Backup & Replication buttons."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    veeam_client = hass.data[DOMAIN][entry.entry_id]["veeam_client"]
+    coordinator = entry.runtime_data["coordinator"]
+    veeam_client = entry.runtime_data["veeam_client"]
 
     added_repository_ids: set[str] = set()
     added_sobr_extent_ids: set[tuple[str, str]] = set()  # (sobr_id, extent_id) tuples

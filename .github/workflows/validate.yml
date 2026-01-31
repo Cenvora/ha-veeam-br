@@ -43,6 +43,27 @@ jobs:
         run: |
           mypy custom_components/ --ignore-missing-imports || true
 
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_test.txt
+
+      - name: Run pytest
+        run: |
+          pytest tests/ -v --tb=short
+
   validate-hacs:
     name: HACS Validation
     runs-on: ubuntu-latest
