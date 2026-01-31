@@ -126,8 +126,12 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_HOST, default=reconf_entry.data.get(CONF_HOST)): cv.string,
-                    vol.Required(CONF_PORT, default=reconf_entry.data.get(CONF_PORT, DEFAULT_PORT)): cv.port,
-                    vol.Required(CONF_USERNAME, default=reconf_entry.data.get(CONF_USERNAME)): cv.string,
+                    vol.Required(
+                        CONF_PORT, default=reconf_entry.data.get(CONF_PORT, DEFAULT_PORT)
+                    ): cv.port,
+                    vol.Required(
+                        CONF_USERNAME, default=reconf_entry.data.get(CONF_USERNAME)
+                    ): cv.string,
                     vol.Required(CONF_PASSWORD): cv.string,
                     vol.Optional(
                         CONF_VERIFY_SSL,

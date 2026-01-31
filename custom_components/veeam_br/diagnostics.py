@@ -28,9 +28,11 @@ async def async_get_config_entry_diagnostics(
         },
         "coordinator": {
             "last_update_success": coordinator.last_update_success,
-            "last_update_success_time": coordinator.last_update_success_time.isoformat()
-            if coordinator.last_update_success_time
-            else None,
+            "last_update_success_time": (
+                coordinator.last_update_success_time.isoformat()
+                if coordinator.last_update_success_time
+                else None
+            ),
         },
         "data": {
             "jobs_count": len(data.get("jobs", [])),
@@ -81,9 +83,11 @@ async def async_get_config_entry_diagnostics(
         diagnostics_data["integration_diagnostics"] = {
             "connected": data["diagnostics"].get("connected"),
             "health_ok": data["diagnostics"].get("health_ok"),
-            "last_successful_poll": data["diagnostics"]["last_successful_poll"].isoformat()
-            if data["diagnostics"].get("last_successful_poll")
-            else None,
+            "last_successful_poll": (
+                data["diagnostics"]["last_successful_poll"].isoformat()
+                if data["diagnostics"].get("last_successful_poll")
+                else None
+            ),
         }
 
     return diagnostics_data

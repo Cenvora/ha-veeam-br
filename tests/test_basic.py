@@ -159,9 +159,7 @@ def test_action_exceptions():
     """Test that button actions raise exceptions on failure (Silver tier requirement)."""
     from pathlib import Path
 
-    button_path = (
-        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "button.py"
-    )
+    button_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "button.py"
 
     with open(button_path) as f:
         button_content = f.read()
@@ -203,9 +201,7 @@ def test_reconfigure_flow():
     ), "Config flow should have async_step_reconfigure method for Gold tier"
 
     # Check strings.json has reconfigure step
-    strings_path = (
-        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "strings.json"
-    )
+    strings_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "strings.json"
 
     import json
 
@@ -252,9 +248,7 @@ def test_strict_typing():
     ), "pyproject.toml should have disallow_untyped_defs enabled"
 
     # Check py.typed marker exists
-    py_typed_path = (
-        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "py.typed"
-    )
+    py_typed_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "py.typed"
 
     assert py_typed_path.exists(), "py.typed marker file should exist for Platinum tier"
 

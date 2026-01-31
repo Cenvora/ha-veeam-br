@@ -194,12 +194,18 @@ async def async_setup_entry(
             return
 
         entity_reg = er.async_get(hass)
-        
+
         # Get current IDs from coordinator data
-        current_jobs_in_data = {job.get("id") for job in coordinator.data.get("jobs", []) if job.get("id")}
-        current_repos_in_data = {repo.get("id") for repo in coordinator.data.get("repositories", []) if repo.get("id")}
-        current_sobrs_in_data = {sobr.get("id") for sobr in coordinator.data.get("sobrs", []) if sobr.get("id")}
-        
+        current_jobs_in_data = {
+            job.get("id") for job in coordinator.data.get("jobs", []) if job.get("id")
+        }
+        current_repos_in_data = {
+            repo.get("id") for repo in coordinator.data.get("repositories", []) if repo.get("id")
+        }
+        current_sobrs_in_data = {
+            sobr.get("id") for sobr in coordinator.data.get("sobrs", []) if sobr.get("id")
+        }
+
         # Find stale job entities
         stale_job_ids = current_job_ids - current_jobs_in_data
         for job_id in stale_job_ids:
@@ -209,7 +215,7 @@ async def async_setup_entry(
                     _LOGGER.info("Removing stale job entity: %s", entity.entity_id)
                     entity_reg.async_remove(entity.entity_id)
             current_job_ids.discard(job_id)
-        
+
         # Find stale repository entities
         stale_repo_ids = current_repo_ids - current_repos_in_data
         for repo_id in stale_repo_ids:
@@ -218,7 +224,7 @@ async def async_setup_entry(
                     _LOGGER.info("Removing stale repository entity: %s", entity.entity_id)
                     entity_reg.async_remove(entity.entity_id)
             current_repo_ids.discard(repo_id)
-        
+
         # Find stale SOBR entities
         stale_sobr_ids = current_sobr_ids - current_sobrs_in_data
         for sobr_id in stale_sobr_ids:

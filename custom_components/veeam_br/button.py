@@ -149,7 +149,9 @@ async def async_setup_entry(
             async_add_entities(new_entities)
 
         # Remove stale button entities
-        _remove_stale_button_entities(hass, entry, added_repository_ids, added_sobr_extent_ids, added_job_ids)
+        _remove_stale_button_entities(
+            hass, entry, added_repository_ids, added_sobr_extent_ids, added_job_ids
+        )
 
     def _remove_stale_button_entities(
         hass: HomeAssistant,
@@ -163,11 +165,15 @@ async def async_setup_entry(
             return
 
         entity_reg = er.async_get(hass)
-        
+
         # Get current IDs from coordinator data
-        current_repos_in_data = {repo.get("id") for repo in coordinator.data.get("repositories", []) if repo.get("id")}
-        current_jobs_in_data = {job.get("id") for job in coordinator.data.get("jobs", []) if job.get("id")}
-        
+        current_repos_in_data = {
+            repo.get("id") for repo in coordinator.data.get("repositories", []) if repo.get("id")
+        }
+        current_jobs_in_data = {
+            job.get("id") for job in coordinator.data.get("jobs", []) if job.get("id")
+        }
+
         # Track current SOBR extents in data
         current_sobr_extents_in_data = set()
         for sobr in coordinator.data.get("sobrs", []):
@@ -177,7 +183,7 @@ async def async_setup_entry(
                     extent_id = extent.get("id")
                     if extent_id:
                         current_sobr_extents_in_data.add((sobr_id, extent_id))
-        
+
         # Find stale repository buttons
         stale_repo_ids = current_repo_ids - current_repos_in_data
         for repo_id in stale_repo_ids:
@@ -186,7 +192,7 @@ async def async_setup_entry(
                     _LOGGER.info("Removing stale repository button: %s", entity.entity_id)
                     entity_reg.async_remove(entity.entity_id)
             current_repo_ids.discard(repo_id)
-        
+
         # Find stale SOBR extent buttons
         stale_sobr_extents = current_sobr_extent_ids - current_sobr_extents_in_data
         for sobr_id, extent_id in stale_sobr_extents:
@@ -195,7 +201,7 @@ async def async_setup_entry(
                     _LOGGER.info("Removing stale SOBR extent button: %s", entity.entity_id)
                     entity_reg.async_remove(entity.entity_id)
             current_sobr_extent_ids.discard((sobr_id, extent_id))
-        
+
         # Find stale job buttons
         stale_job_ids = current_job_ids - current_jobs_in_data
         for job_id in stale_job_ids:
