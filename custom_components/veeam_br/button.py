@@ -12,7 +12,13 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import API_VERSIONS, CONF_API_VERSION, DEFAULT_API_VERSION, DOMAIN
+from .const import (
+    API_VERSIONS,
+    CONF_API_VERSION,
+    DEFAULT_API_VERSION,
+    DOMAIN,
+    check_api_feature_availability,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +41,12 @@ async def async_setup_entry(
         if not coordinator.data:
             return
 
+        # Get the configured API version
+        api_version = entry.options.get(
+            CONF_API_VERSION,
+            entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
+        )
+
         new_entities = []
 
         # Create buttons for each job
@@ -43,79 +55,90 @@ async def async_setup_entry(
             if not job_id or job_id in added_job_ids:
                 continue
 
-            new_entities.extend(
-                [
-                    VeeamJobStartButton(coordinator, entry, job, veeam_client),
-                    VeeamJobStopButton(coordinator, entry, job, veeam_client),
-                    VeeamJobRetryButton(coordinator, entry, job, veeam_client),
-                    VeeamJobEnableButton(coordinator, entry, job, veeam_client),
-                    VeeamJobDisableButton(coordinator, entry, job, veeam_client),
-                ]
-            )
+            job_buttons = []
+
+            # Check if each button type's API feature is available before creating
+            if check_api_feature_availability(api_version, "models.job_start_spec"):
+                job_buttons.append(VeeamJobStartButton(coordinator, entry, job, veeam_client))
+
+            if check_api_feature_availability(api_version, "models.job_stop_spec"):
+                job_buttons.append(VeeamJobStopButton(coordinator, entry, job, veeam_client))
+
+            if check_api_feature_availability(api_version, "models.job_retry_spec"):
+                job_buttons.append(VeeamJobRetryButton(coordinator, entry, job, veeam_client))
+
+            if check_api_feature_availability(api_version, "api.jobs"):
+                job_buttons.append(VeeamJobEnableButton(coordinator, entry, job, veeam_client))
+                job_buttons.append(VeeamJobDisableButton(coordinator, entry, job, veeam_client))
+
+            new_entities.extend(job_buttons)
             added_job_ids.add(job_id)
             _LOGGER.debug(
-                "Adding buttons for job: %s (id: %s)",
+                "Adding %d buttons for job: %s (id: %s)",
+                len(job_buttons),
                 job.get("name"),
                 job_id,
             )
 
         # Create rescan button for each repository
-        for repository in coordinator.data.get("repositories", []):
-            repo_id = repository.get("id")
-            if not repo_id or repo_id in added_repository_ids:
-                continue
+        if check_api_feature_availability(api_version, "models.repositories_rescan_spec"):
+            for repository in coordinator.data.get("repositories", []):
+                repo_id = repository.get("id")
+                if not repo_id or repo_id in added_repository_ids:
+                    continue
 
-            new_entities.append(
-                VeeamRepositoryRescanButton(coordinator, entry, repository, veeam_client)
-            )
-            added_repository_ids.add(repo_id)
-            _LOGGER.debug(
-                "Adding rescan button for repository: %s (id: %s)",
-                repository.get("name"),
-                repo_id,
-            )
+                new_entities.append(
+                    VeeamRepositoryRescanButton(coordinator, entry, repository, veeam_client)
+                )
+                added_repository_ids.add(repo_id)
+                _LOGGER.debug(
+                    "Adding rescan button for repository: %s (id: %s)",
+                    repository.get("name"),
+                    repo_id,
+                )
 
         # Create buttons for each SOBR extent
-        for sobr in coordinator.data.get("sobrs", []):
-            sobr_id = sobr.get("id")
-            sobr_name = sobr.get("name", "Unknown SOBR")
-            if not sobr_id:
-                continue
-
-            for extent in sobr.get("extents", []):
-                extent_id = extent.get("id")
-                if not extent_id:
+        if check_api_feature_availability(api_version, "models.scale_out_extent_maintenance_spec"):
+            for sobr in coordinator.data.get("sobrs", []):
+                sobr_id = sobr.get("id")
+                sobr_name = sobr.get("name", "Unknown SOBR")
+                if not sobr_id:
                     continue
 
-                extent_key = (sobr_id, extent_id)
-                if extent_key in added_sobr_extent_ids:
-                    continue
+                for extent in sobr.get("extents", []):
+                    extent_id = extent.get("id")
+                    if not extent_id:
+                        continue
 
-                # Create 4 buttons for each extent (enable/disable sealed and maintenance mode)
-                new_entities.extend(
-                    [
-                        VeeamSOBRExtentEnableSealedModeButton(
-                            coordinator, entry, sobr, extent, veeam_client
-                        ),
-                        VeeamSOBRExtentDisableSealedModeButton(
-                            coordinator, entry, sobr, extent, veeam_client
-                        ),
-                        VeeamSOBRExtentEnableMaintenanceModeButton(
-                            coordinator, entry, sobr, extent, veeam_client
-                        ),
-                        VeeamSOBRExtentDisableMaintenanceModeButton(
-                            coordinator, entry, sobr, extent, veeam_client
-                        ),
-                    ]
-                )
-                added_sobr_extent_ids.add(extent_key)
-                _LOGGER.debug(
-                    "Adding buttons for SOBR extent: %s/%s (sobr_id: %s, extent_id: %s)",
-                    sobr_name,
-                    extent.get("name"),
-                    sobr_id,
-                    extent_id,
-                )
+                    extent_key = (sobr_id, extent_id)
+                    if extent_key in added_sobr_extent_ids:
+                        continue
+
+                    # Create 4 buttons for each extent (enable/disable sealed and maintenance mode)
+                    new_entities.extend(
+                        [
+                            VeeamSOBRExtentEnableSealedModeButton(
+                                coordinator, entry, sobr, extent, veeam_client
+                            ),
+                            VeeamSOBRExtentDisableSealedModeButton(
+                                coordinator, entry, sobr, extent, veeam_client
+                            ),
+                            VeeamSOBRExtentEnableMaintenanceModeButton(
+                                coordinator, entry, sobr, extent, veeam_client
+                            ),
+                            VeeamSOBRExtentDisableMaintenanceModeButton(
+                                coordinator, entry, sobr, extent, veeam_client
+                            ),
+                        ]
+                    )
+                    added_sobr_extent_ids.add(extent_key)
+                    _LOGGER.debug(
+                        "Adding buttons for SOBR extent: %s/%s (sobr_id: %s, extent_id: %s)",
+                        sobr_name,
+                        extent.get("name"),
+                        sobr_id,
+                        extent_id,
+                    )
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam buttons", len(new_entities))

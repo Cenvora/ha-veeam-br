@@ -92,3 +92,45 @@ API_VERSIONS = _discover_api_versions()
 
 # Update interval
 UPDATE_INTERVAL = 60  # seconds
+
+
+def check_api_feature_availability(api_version: str, feature_path: str) -> bool:
+    """Check if a specific API feature (endpoint/spec model) is available in the given API version.
+
+    Args:
+        api_version: The API version to check (e.g., "1.3-rev1")
+        feature_path: The import path to check (e.g., "models.job_start_spec" or "api.jobs")
+
+    Returns:
+        bool: True if the feature is available in the API version, False otherwise
+    """
+    api_module = API_VERSIONS.get(api_version, "v1_3_rev1")
+
+    try:
+        # Try to import the module/feature
+        import_path = f"veeam_br.{api_module}.{feature_path}"
+        importlib.util.find_spec(import_path)
+        return True
+    except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
+        return False
+
+
+# API feature requirements mapping
+# Maps entity types to their required API features (models/endpoints)
+API_FEATURE_REQUIREMENTS = {
+    # Button features
+    "job_start_button": "models.job_start_spec",
+    "job_stop_button": "models.job_stop_spec",
+    "job_retry_button": "models.job_retry_spec",
+    "job_enable_button": "api.jobs",  # Uses enable_job endpoint
+    "job_disable_button": "api.jobs",  # Uses disable_job endpoint
+    "repository_rescan_button": "models.repositories_rescan_spec",
+    "sobr_extent_sealed_mode_button": "models.scale_out_extent_maintenance_spec",
+    "sobr_extent_maintenance_mode_button": "models.scale_out_extent_maintenance_spec",
+    # Data sources (for sensors)
+    "jobs_data": "api.jobs",
+    "repositories_data": "api.repositories",
+    "sobr_data": "api.repositories",  # SOBRs use repositories API
+    "license_data": "api.license_",
+    "server_data": "api.service",
+}

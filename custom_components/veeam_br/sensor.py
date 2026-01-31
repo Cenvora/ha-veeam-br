@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_API_VERSION, DEFAULT_API_VERSION, DOMAIN, check_api_feature_availability
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,84 +39,101 @@ async def async_setup_entry(
         if not coordinator.data:
             return
 
+        # Get the configured API version
+        api_version = entry.options.get(
+            CONF_API_VERSION,
+            entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
+        )
+
         new_entities = []
 
         # ---- JOB SENSORS (dynamic) - Each job becomes a device with multiple sensors ----
-        for job in coordinator.data.get("jobs", []):
-            job_id = job.get("id")
-            if not job_id or job_id in added_job_ids:
-                continue
+        # Jobs data comes from jobs API, only create if available
+        if check_api_feature_availability(api_version, "api.jobs"):
+            for job in coordinator.data.get("jobs", []):
+                job_id = job.get("id")
+                if not job_id or job_id in added_job_ids:
+                    continue
 
-            # Create sensors for each job attribute
-            new_entities.extend(
-                [
-                    VeeamJobStatusSensor(coordinator, entry, job),
-                    VeeamJobTypeSensor(coordinator, entry, job),
-                    VeeamJobLastRunSensor(coordinator, entry, job),
-                    VeeamJobNextRunSensor(coordinator, entry, job),
-                    VeeamJobLastResultSensor(coordinator, entry, job),
-                ]
-            )
-            added_job_ids.add(job_id)
+                # Create sensors for each job attribute
+                new_entities.extend(
+                    [
+                        VeeamJobStatusSensor(coordinator, entry, job),
+                        VeeamJobTypeSensor(coordinator, entry, job),
+                        VeeamJobLastRunSensor(coordinator, entry, job),
+                        VeeamJobNextRunSensor(coordinator, entry, job),
+                        VeeamJobLastResultSensor(coordinator, entry, job),
+                    ]
+                )
+                added_job_ids.add(job_id)
 
         # ---- REPOSITORY SENSORS (dynamic) - Each repository becomes a device with multiple sensors ----
-        for repository in coordinator.data.get("repositories", []):
-            repo_id = repository.get("id")
-            if not repo_id or repo_id in added_repository_ids:
-                continue
+        # Repository data comes from repositories API, only create if available
+        if check_api_feature_availability(api_version, "api.repositories"):
+            for repository in coordinator.data.get("repositories", []):
+                repo_id = repository.get("id")
+                if not repo_id or repo_id in added_repository_ids:
+                    continue
 
-            # Create sensors for each repository attribute
-            new_entities.extend(
-                [
-                    VeeamRepositoryTypeSensor(coordinator, entry, repository),
-                    VeeamRepositoryDescriptionSensor(coordinator, entry, repository),
-                    VeeamRepositoryCapacitySensor(coordinator, entry, repository),
-                    VeeamRepositoryFreeSpaceSensor(coordinator, entry, repository),
-                    VeeamRepositoryUsedSpaceSensor(coordinator, entry, repository),
-                    VeeamRepositoryUsedSpacePercentSensor(coordinator, entry, repository),
-                    VeeamRepositoryOnlineStatusSensor(coordinator, entry, repository),
-                    VeeamRepositoryOutOfDateSensor(coordinator, entry, repository),
-                    VeeamRepositoryImmutableSensor(coordinator, entry, repository),
-                    VeeamRepositoryAccessibleSensor(coordinator, entry, repository),
-                    VeeamRepositoryCapacityWarningSensor(coordinator, entry, repository),
-                    VeeamRepositoryCapacityCriticalSensor(coordinator, entry, repository),
-                ]
-            )
-
-            # Add immutability days sensor only if immutability is enabled
-            if repository.get("is_immutable") and repository.get("immutability_days"):
-                new_entities.append(
-                    VeeamRepositoryImmutabilityDaysSensor(coordinator, entry, repository)
+                # Create sensors for each repository attribute
+                new_entities.extend(
+                    [
+                        VeeamRepositoryTypeSensor(coordinator, entry, repository),
+                        VeeamRepositoryDescriptionSensor(coordinator, entry, repository),
+                        VeeamRepositoryCapacitySensor(coordinator, entry, repository),
+                        VeeamRepositoryFreeSpaceSensor(coordinator, entry, repository),
+                        VeeamRepositoryUsedSpaceSensor(coordinator, entry, repository),
+                        VeeamRepositoryUsedSpacePercentSensor(coordinator, entry, repository),
+                        VeeamRepositoryOnlineStatusSensor(coordinator, entry, repository),
+                        VeeamRepositoryOutOfDateSensor(coordinator, entry, repository),
+                        VeeamRepositoryImmutableSensor(coordinator, entry, repository),
+                        VeeamRepositoryAccessibleSensor(coordinator, entry, repository),
+                        VeeamRepositoryCapacityWarningSensor(coordinator, entry, repository),
+                        VeeamRepositoryCapacityCriticalSensor(coordinator, entry, repository),
+                    ]
                 )
-            added_repository_ids.add(repo_id)
-            _LOGGER.debug(
-                "Adding repository sensors for: %s (id: %s)",
-                repository.get("name"),
-                repo_id,
-            )
+
+                # Add immutability days sensor only if immutability is enabled
+                if repository.get("is_immutable") and repository.get("immutability_days"):
+                    new_entities.append(
+                        VeeamRepositoryImmutabilityDaysSensor(coordinator, entry, repository)
+                    )
+                added_repository_ids.add(repo_id)
+                _LOGGER.debug(
+                    "Adding repository sensors for: %s (id: %s)",
+                    repository.get("name"),
+                    repo_id,
+                )
 
         # ---- SOBR SENSORS (dynamic) - Each SOBR becomes a device with multiple sensors ----
-        for sobr in coordinator.data.get("sobrs", []):
-            sobr_id = sobr.get("id")
-            if not sobr_id or sobr_id in added_sobr_ids:
-                continue
+        # SOBR data comes from repositories API, only create if available
+        if check_api_feature_availability(api_version, "api.repositories"):
+            for sobr in coordinator.data.get("sobrs", []):
+                sobr_id = sobr.get("id")
+                if not sobr_id or sobr_id in added_sobr_ids:
+                    continue
 
-            # Create sensors for each SOBR attribute
-            new_entities.extend(
-                [
-                    VeeamSOBRDescriptionSensor(coordinator, entry, sobr),
-                    VeeamSOBRExtentCountSensor(coordinator, entry, sobr),
-                ]
-            )
-            added_sobr_ids.add(sobr_id)
-            _LOGGER.debug(
-                "Adding SOBR sensors for: %s (id: %s)",
-                sobr.get("name"),
-                sobr_id,
-            )
+                # Create sensors for each SOBR attribute
+                new_entities.extend(
+                    [
+                        VeeamSOBRDescriptionSensor(coordinator, entry, sobr),
+                        VeeamSOBRExtentCountSensor(coordinator, entry, sobr),
+                    ]
+                )
+                added_sobr_ids.add(sobr_id)
+                _LOGGER.debug(
+                    "Adding SOBR sensors for: %s (id: %s)",
+                    sobr.get("name"),
+                    sobr_id,
+                )
 
         # ---- SERVER SENSORS (once) - Server info becomes a device with multiple sensors ----
-        if not server_added and coordinator.data.get("server_info"):
+        # Server data comes from service API, only create if available
+        if (
+            not server_added
+            and coordinator.data.get("server_info")
+            and check_api_feature_availability(api_version, "api.service")
+        ):
             new_entities.extend(
                 [
                     VeeamServerBuildVersionSensor(coordinator, entry),
@@ -133,7 +150,12 @@ async def async_setup_entry(
             server_added = True
 
         # ---- LICENSE SENSORS (once) - License becomes a device with multiple sensors ----
-        if not license_added and coordinator.data.get("license_info"):
+        # License data comes from license_ API, only create if available
+        if (
+            not license_added
+            and coordinator.data.get("license_info")
+            and check_api_feature_availability(api_version, "api.license_")
+        ):
             new_entities.extend(
                 [
                     VeeamLicenseStatusSensor(coordinator, entry),
