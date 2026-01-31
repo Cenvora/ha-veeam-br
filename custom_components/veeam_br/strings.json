@@ -60,7 +60,10 @@
     "abort": {
       "already_configured": "This Veeam server is already configured",
       "reauth_successful": "Re-authentication was successful",
-      "reconfigure_successful": "Reconfiguration was successful"
+      "reconfigure_successful": "Reconfiguration was successful",
+      "cannot_connect": "Failed to connect to Veeam server",
+      "invalid_auth": "Invalid authentication credentials",
+      "unknown": "Unexpected error occurred"
     }
   },
   "options": {

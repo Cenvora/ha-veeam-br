@@ -119,6 +119,7 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_update_reload_and_abort(
                 reconf_entry,
                 data=data,
+                reason="reconfigure_successful",
             )
 
         return self.async_show_form(
@@ -176,6 +177,7 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_update_reload_and_abort(
                     reauth_entry,
                     data=data,
+                    reason="reauth_successful",
                 )
 
         return self.async_show_form(
