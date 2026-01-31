@@ -74,8 +74,18 @@ async def async_setup_entry(
                     VeeamRepositoryUsedSpacePercentSensor(coordinator, entry, repository),
                     VeeamRepositoryOnlineStatusSensor(coordinator, entry, repository),
                     VeeamRepositoryOutOfDateSensor(coordinator, entry, repository),
+                    VeeamRepositoryImmutableSensor(coordinator, entry, repository),
+                    VeeamRepositoryAccessibleSensor(coordinator, entry, repository),
+                    VeeamRepositoryCapacityWarningSensor(coordinator, entry, repository),
+                    VeeamRepositoryCapacityCriticalSensor(coordinator, entry, repository),
                 ]
             )
+
+            # Add immutability days sensor only if immutability is enabled
+            if repository.get("is_immutable") and repository.get("immutability_days"):
+                new_entities.append(
+                    VeeamRepositoryImmutabilityDaysSensor(coordinator, entry, repository)
+                )
             added_repository_ids.add(repo_id)
             _LOGGER.debug(
                 "Adding repository sensors for: %s (id: %s)",
@@ -917,6 +927,22 @@ class VeeamRepositoryBinarySensorBase(VeeamRepositoryMixin, CoordinatorEntity, B
         CoordinatorEntity.__init__(self, coordinator)
         VeeamRepositoryMixin.__init__(self, coordinator, config_entry, repository_data)
 
+    def _get_free_space_percent(self) -> float | None:
+        """Calculate free space percentage for the repository.
+
+        Free space is calculated as (capacity - used) / capacity * 100
+        to get the actual available space percentage.
+        """
+        repo = self._repository()
+        if not repo:
+            return None
+        capacity = repo.get("capacity_gb")
+        used = repo.get("used_space_gb")
+        if capacity and capacity > 0 and used is not None:
+            free = capacity - used
+            return (free / capacity) * 100
+        return None
+
 
 class VeeamRepositoryOnlineStatusSensor(VeeamRepositoryBinarySensorBase):
     """Binary sensor for Veeam Repository Online Status."""
@@ -954,3 +980,117 @@ class VeeamRepositoryOutOfDateSensor(VeeamRepositoryBinarySensorBase):
         if not repo:
             return None
         return bool(repo.get("is_out_of_date"))
+
+
+class VeeamRepositoryImmutableSensor(VeeamRepositoryBinarySensorBase):
+    """Binary sensor for Veeam Repository Immutability."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_immutable"
+        self._attr_name = "Immutable"
+
+    @property
+    def is_on(self) -> bool | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        return bool(repo.get("is_immutable"))
+
+    @property
+    def icon(self) -> str:
+        return "mdi:lock" if self.is_on else "mdi:lock-open"
+
+
+class VeeamRepositoryImmutabilityDaysSensor(VeeamRepositoryBaseSensor):
+    """Sensor for Veeam Repository Immutability Days."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_repository_{self._repo_id}_immutability_days"
+        )
+        self._attr_name = "Immutability Days"
+        self._attr_native_unit_of_measurement = "days"
+
+    @property
+    def native_value(self) -> int | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        return repo.get("immutability_days")
+
+    @property
+    def icon(self) -> str:
+        return "mdi:calendar-lock"
+
+
+class VeeamRepositoryAccessibleSensor(VeeamRepositoryBinarySensorBase):
+    """Binary sensor for Veeam Repository Accessible status."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_accessible"
+        self._attr_name = "Accessible"
+
+    @property
+    def is_on(self) -> bool | None:
+        repo = self._repository()
+        if not repo:
+            return None
+        return bool(repo.get("is_accessible"))
+
+
+class VeeamRepositoryCapacityWarningSensor(VeeamRepositoryBinarySensorBase):
+    """Binary sensor for Veeam Repository Capacity Warning (< 15% free)."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_repository_{self._repo_id}_capacity_warning"
+        )
+        self._attr_name = "Capacity Warning"
+
+    @property
+    def is_on(self) -> bool | None:
+        free_percent = self._get_free_space_percent()
+        if free_percent is None:
+            return None
+        return free_percent < 15
+
+    @property
+    def icon(self) -> str:
+        return "mdi:alert" if self.is_on else "mdi:check-circle"
+
+
+class VeeamRepositoryCapacityCriticalSensor(VeeamRepositoryBinarySensorBase):
+    """Binary sensor for Veeam Repository Capacity Critical (< 5% free)."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator, config_entry, repository_data):
+        super().__init__(coordinator, config_entry, repository_data)
+        self._attr_unique_id = (
+            f"{config_entry.entry_id}_repository_{self._repo_id}_capacity_critical"
+        )
+        self._attr_name = "Capacity Critical"
+
+    @property
+    def is_on(self) -> bool | None:
+        free_percent = self._get_free_space_percent()
+        if free_percent is None:
+            return None
+        return free_percent < 5
+
+    @property
+    def icon(self) -> str:
+        return "mdi:alert-circle" if self.is_on else "mdi:check-circle"

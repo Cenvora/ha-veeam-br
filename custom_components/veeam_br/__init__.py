@@ -25,7 +25,7 @@ from .token_manager import VeeamTokenManager
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -342,6 +342,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 repo_dict["used_space_gb"] = getattr(state, "used_space_gb", None)
                                 repo_dict["is_online"] = getattr(state, "is_online", None)
                                 repo_dict["is_out_of_date"] = getattr(state, "is_out_of_date", None)
+
+                            # Extract repository-specific fields from the repo object
+                            # Immutability - from bucket.immutability for S3 repos
+                            # Due to circular inheritance in OpenAPI schema, bucket is in additional_properties
+                            if hasattr(repo, "additional_properties"):
+                                bucket = repo.additional_properties.get("bucket")
+                                _LOGGER.debug(
+                                    "Repository %s: Checking additional_properties, bucket found=%s",
+                                    repo_dict.get("name"),
+                                    bucket is not None,
+                                )
+                                if bucket:
+                                    # bucket is a dict from additional_properties
+                                    immutability = bucket.get("immutability")
+                                    if immutability:
+                                        _LOGGER.debug(
+                                            "Repository %s: immutability found in bucket",
+                                            repo_dict.get("name"),
+                                        )
+                                        # immutability is a dict with isEnabled, daysCount, immutabilityMode
+                                        is_enabled = immutability.get("isEnabled")
+                                        if is_enabled is not None:
+                                            repo_dict["is_immutable"] = bool(is_enabled)
+                                            _LOGGER.info(
+                                                "Repository %s: Set is_immutable=%s",
+                                                repo_dict.get("name"),
+                                                repo_dict["is_immutable"],
+                                            )
+                                            # Extract immutability days count if enabled
+                                            if is_enabled:
+                                                days_count = immutability.get("daysCount")
+                                                if days_count is not None:
+                                                    repo_dict["immutability_days"] = days_count
+                                                    _LOGGER.debug(
+                                                        "Repository %s: immutability_days=%s",
+                                                        repo_dict.get("name"),
+                                                        days_count,
+                                                    )
+
+                            # Accessible - use is_online from state as a proxy
+                            repo_dict["is_accessible"] = repo_dict.get("is_online")
 
                             # Add all additional properties from the API response
                             if hasattr(repo, "additional_properties"):
