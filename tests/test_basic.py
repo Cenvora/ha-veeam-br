@@ -209,6 +209,14 @@ def test_reconfigure_flow():
         strings = json.load(f)
 
     assert "reconfigure" in strings["config"]["step"], "strings.json should have reconfigure step"
+    
+    # Check that abort messages exist for reconfigure and reauth
+    assert "abort" in strings["config"], "strings.json should have abort section"
+    assert "reconfigure_successful" in strings["config"]["abort"], "strings.json should have reconfigure_successful abort message"
+    assert "reauth_successful" in strings["config"]["abort"], "strings.json should have reauth_successful abort message"
+    assert "cannot_connect" in strings["config"]["abort"], "strings.json should have cannot_connect abort message"
+    assert "invalid_auth" in strings["config"]["abort"], "strings.json should have invalid_auth abort message"
+    assert "unknown" in strings["config"]["abort"], "strings.json should have unknown abort message"
 
 
 def test_parallel_updates():

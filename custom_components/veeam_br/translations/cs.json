@@ -60,7 +60,10 @@
     "abort": {
       "already_configured": "Tento server Veeam je již nakonfigurován",
       "reauth_successful": "Opětovné ověření bylo úspěšné",
-      "reconfigure_successful": "Překonfigurování bylo úspěšné"
+      "reconfigure_successful": "Překonfigurování bylo úspěšné",
+      "cannot_connect": "Připojení k serveru Veeam se nezdařilo",
+      "invalid_auth": "Neplatné přihlašovací údaje",
+      "unknown": "Došlo k neočekávané chybě"
     }
   },
   "options": {

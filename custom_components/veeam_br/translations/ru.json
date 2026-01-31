@@ -60,7 +60,10 @@
     "abort": {
       "already_configured": "Этот сервер Veeam уже настроен",
       "reauth_successful": "Повторная аутентификация прошла успешно",
-      "reconfigure_successful": "Реконфигурация прошла успешно"
+      "reconfigure_successful": "Реконфигурация прошла успешно",
+      "cannot_connect": "Не удалось подключиться к серверу Veeam",
+      "invalid_auth": "Неверные учетные данные",
+      "unknown": "Произошла непредвиденная ошибка"
     }
   },
   "options": {

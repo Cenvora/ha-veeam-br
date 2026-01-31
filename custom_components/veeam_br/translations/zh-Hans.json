@@ -60,7 +60,10 @@
     "abort": {
       "already_configured": "此 Veeam 服务器已配置",
       "reauth_successful": "重新验证成功",
-      "reconfigure_successful": "重新配置成功"
+      "reconfigure_successful": "重新配置成功",
+      "cannot_connect": "无法连接到 Veeam 服务器",
+      "invalid_auth": "身份验证凭据无效",
+      "unknown": "发生意外错误"
     }
   },
   "options": {

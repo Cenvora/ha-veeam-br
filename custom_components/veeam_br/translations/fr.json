@@ -60,7 +60,10 @@
     "abort": {
       "already_configured": "Ce serveur Veeam est déjà configuré",
       "reauth_successful": "La réauthentification a réussi",
-      "reconfigure_successful": "La reconfiguration a réussi"
+      "reconfigure_successful": "La reconfiguration a réussi",
+      "cannot_connect": "Échec de la connexion au serveur Veeam",
+      "invalid_auth": "Identifiants d'authentification invalides",
+      "unknown": "Une erreur inattendue s'est produite"
     }
   },
   "options": {

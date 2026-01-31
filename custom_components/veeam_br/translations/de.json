@@ -60,7 +60,10 @@
     "abort": {
       "already_configured": "Dieser Veeam-Server ist bereits konfiguriert",
       "reauth_successful": "Erneute Authentifizierung war erfolgreich",
-      "reconfigure_successful": "Neukonfiguration war erfolgreich"
+      "reconfigure_successful": "Neukonfiguration war erfolgreich",
+      "cannot_connect": "Verbindung zum Veeam-Server fehlgeschlagen",
+      "invalid_auth": "Ungültige Anmeldedaten",
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten"
     }
   },
   "options": {
