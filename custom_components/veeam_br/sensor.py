@@ -54,6 +54,7 @@ async def async_setup_entry(
                     VeeamJobTypeSensor(coordinator, entry, job),
                     VeeamJobLastRunSensor(coordinator, entry, job),
                     VeeamJobNextRunSensor(coordinator, entry, job),
+                    VeeamJobLastResultSensor(coordinator, entry, job),
                 ]
             )
             added_job_ids.add(job_id)
@@ -338,6 +339,35 @@ class VeeamJobNextRunSensor(VeeamJobBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:clock-end"
+
+
+class VeeamJobLastResultSensor(VeeamJobBaseSensor):
+    """Sensor for Veeam Job Last Result."""
+
+    def __init__(self, coordinator, config_entry, job_data):
+        super().__init__(coordinator, config_entry, job_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_last_result"
+        self._attr_name = "Last Result"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        job = self._job()
+        if not job:
+            return None
+        last_result = job.get("last_result", "").lower()
+        return last_result if last_result else "unknown"
+
+    @property
+    def icon(self) -> str:
+        state = self.native_value
+        if state == "success":
+            return "mdi:check-circle"
+        if state == "warning":
+            return "mdi:alert"
+        if state == "failed":
+            return "mdi:close-circle"
+        return "mdi:help-circle"
 
 
 # ===========================

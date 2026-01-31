@@ -48,6 +48,8 @@ async def async_setup_entry(
                     VeeamJobStartButton(coordinator, entry, job, veeam_client),
                     VeeamJobStopButton(coordinator, entry, job, veeam_client),
                     VeeamJobRetryButton(coordinator, entry, job, veeam_client),
+                    VeeamJobEnableButton(coordinator, entry, job, veeam_client),
+                    VeeamJobDisableButton(coordinator, entry, job, veeam_client),
                 ]
             )
             added_job_ids.add(job_id)
@@ -720,6 +722,74 @@ class VeeamJobRetryButton(VeeamJobButtonBase):
         except Exception as call_err:
             _LOGGER.error(
                 "Failed to retry job %s: %s",
+                self._job_name,
+                call_err,
+            )
+            raise
+
+
+class VeeamJobEnableButton(VeeamJobButtonBase):
+    """Button to enable a Veeam job."""
+
+    def __init__(self, coordinator, config_entry, job_data, veeam_client):
+        """Initialize the button."""
+        super().__init__(coordinator, config_entry, job_data, veeam_client)
+        self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_enable"
+        self._attr_name = "Enable"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the button."""
+        return "mdi:check-circle-outline"
+
+    async def async_press(self) -> None:
+        """Handle the button press to enable the job."""
+        # Call the enable endpoint using VeeamClient
+        try:
+            await self._veeam_client.call(
+                self._veeam_client.api("jobs").enable_job,
+                id=self._job_id,
+            )
+            _LOGGER.info("Successfully enabled job: %s", self._job_name)
+            # Request coordinator update to refresh job state
+            await self.coordinator.async_request_refresh()
+        except Exception as call_err:
+            _LOGGER.error(
+                "Failed to enable job %s: %s",
+                self._job_name,
+                call_err,
+            )
+            raise
+
+
+class VeeamJobDisableButton(VeeamJobButtonBase):
+    """Button to disable a Veeam job."""
+
+    def __init__(self, coordinator, config_entry, job_data, veeam_client):
+        """Initialize the button."""
+        super().__init__(coordinator, config_entry, job_data, veeam_client)
+        self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_disable"
+        self._attr_name = "Disable"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the button."""
+        return "mdi:cancel"
+
+    async def async_press(self) -> None:
+        """Handle the button press to disable the job."""
+        # Call the disable endpoint using VeeamClient
+        try:
+            await self._veeam_client.call(
+                self._veeam_client.api("jobs").disable_job,
+                id=self._job_id,
+            )
+            _LOGGER.info("Successfully disabled job: %s", self._job_name)
+            # Request coordinator update to refresh job state
+            await self.coordinator.async_request_refresh()
+        except Exception as call_err:
+            _LOGGER.error(
+                "Failed to disable job %s: %s",
                 self._job_name,
                 call_err,
             )
