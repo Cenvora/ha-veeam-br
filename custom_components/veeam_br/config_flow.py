@@ -91,6 +91,55 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "VeeamBROptionsFlow":
         return VeeamBROptionsFlow()
 
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        """Handle reconfiguration of the integration."""
+        reconf_entry = self._get_reconfigure_entry()
+
+        if user_input is not None:
+            # Merge with existing config data
+            data = {
+                **reconf_entry.data,
+                CONF_HOST: user_input[CONF_HOST],
+                CONF_PORT: user_input[CONF_PORT],
+                CONF_USERNAME: user_input[CONF_USERNAME],
+                CONF_PASSWORD: user_input[CONF_PASSWORD],
+                CONF_VERIFY_SSL: user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+            }
+
+            try:
+                await validate_input(self.hass, data)
+            except PermissionError:
+                return self.async_abort(reason="invalid_auth")
+            except ConnectionError:
+                return self.async_abort(reason="cannot_connect")
+            except Exception:
+                _LOGGER.exception("Unexpected exception during reconfigure")
+                return self.async_abort(reason="unknown")
+
+            return self.async_update_reload_and_abort(
+                reconf_entry,
+                data=data,
+            )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_HOST, default=reconf_entry.data.get(CONF_HOST)): cv.string,
+                    vol.Required(CONF_PORT, default=reconf_entry.data.get(CONF_PORT, DEFAULT_PORT)): cv.port,
+                    vol.Required(CONF_USERNAME, default=reconf_entry.data.get(CONF_USERNAME)): cv.string,
+                    vol.Required(CONF_PASSWORD): cv.string,
+                    vol.Optional(
+                        CONF_VERIFY_SSL,
+                        default=reconf_entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+                    ): cv.boolean,
+                }
+            ),
+            description_placeholders={
+                "host": reconf_entry.data.get(CONF_HOST),
+            },
+        )
+
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
         """Handle reauth upon API authentication error."""
         return await self.async_step_reauth_confirm()

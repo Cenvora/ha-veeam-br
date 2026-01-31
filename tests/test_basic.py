@@ -33,7 +33,7 @@ def test_manifest_valid():
     # Check specific values
     assert manifest["domain"] == "veeam_br"
     assert manifest["config_flow"] is True
-    assert manifest["quality_scale"] == "silver"
+    assert manifest["quality_scale"] == "gold"
     assert "veeam-br" in manifest["requirements"][0]
 
 
@@ -175,7 +175,9 @@ def test_action_exceptions():
     # Find all outer exception handlers (not in nested try blocks)
     # We're looking for patterns like "except Exception as err:" followed by logging and raise
     outer_exceptions = re.findall(
-        r"except Exception as err:.*?(?=\n(?:class |async def |def |$))", button_content, re.DOTALL
+        r"except Exception as err:.*?(?=\n(?:class |async def |def |$))",
+        button_content,
+        re.DOTALL,
     )
 
     # Each outer exception handler should have a raise statement
@@ -184,3 +186,53 @@ def test_action_exceptions():
             assert (
                 "raise" in exc_block
             ), f"Exception handlers should re-raise exceptions for Silver tier compliance"
+
+
+def test_reconfigure_flow():
+    """Test that reconfigure flow is implemented (Gold tier requirement)."""
+    from pathlib import Path
+
+    config_flow_path = (
+        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "config_flow.py"
+    )
+
+    with open(config_flow_path) as f:
+        content = f.read()
+
+    # Check that reconfigure method exists
+    assert (
+        "async def async_step_reconfigure" in content
+    ), "Config flow should have async_step_reconfigure method for Gold tier"
+
+    # Check strings.json has reconfigure step
+    strings_path = (
+        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "strings.json"
+    )
+
+    import json
+
+    with open(strings_path) as f:
+        strings = json.load(f)
+
+    assert "reconfigure" in strings["config"]["step"], "strings.json should have reconfigure step"
+
+
+def test_parallel_updates():
+    """Test that PARALLEL_UPDATES is specified (Silver tier requirement)."""
+    from pathlib import Path
+
+    # Check sensor.py
+    sensor_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "sensor.py"
+
+    with open(sensor_path) as f:
+        sensor_content = f.read()
+
+    assert "PARALLEL_UPDATES" in sensor_content, "sensor.py should define PARALLEL_UPDATES"
+
+    # Check button.py
+    button_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "button.py"
+
+    with open(button_path) as f:
+        button_content = f.read()
+
+    assert "PARALLEL_UPDATES" in button_content, "button.py should define PARALLEL_UPDATES"

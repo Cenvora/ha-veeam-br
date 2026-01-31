@@ -17,6 +17,9 @@ from .const import CONF_API_VERSION, DEFAULT_API_VERSION, DOMAIN, check_api_feat
 
 _LOGGER = logging.getLogger(__name__)
 
+# Limit parallel updates to avoid overwhelming the Veeam API
+PARALLEL_UPDATES = 1
+
 
 async def async_setup_entry(
     hass: HomeAssistant,

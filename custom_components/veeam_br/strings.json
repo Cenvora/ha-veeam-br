@@ -13,6 +13,17 @@
           "api_version": "API Version"
         }
       },
+      "reconfigure": {
+        "title": "Reconfigure Veeam Backup & Replication",
+        "description": "Update the connection details for {host}.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL Certificate"
+        }
+      },
       "reauth_confirm": {
         "title": "Re-authenticate to Veeam Backup & Replication",
         "description": "The authentication credentials for {host} are no longer valid. Please enter new credentials.",
