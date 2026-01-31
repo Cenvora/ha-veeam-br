@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -795,7 +795,10 @@ class VeeamLicenseAutoUpdateSensor(VeeamLicenseBinarySensorBase):
         license_info = self._license_info()
         if not license_info:
             return None
-        return bool(license_info.get("auto_update_enabled"))
+        value = license_info.get("auto_update_enabled")
+        if value is None:
+            return None
+        return bool(value)
 
 
 class VeeamLicenseCloudConnectSensor(VeeamLicenseBinarySensorBase):
@@ -896,6 +899,7 @@ class VeeamRepositoryCapacitySensor(VeeamRepositoryBaseSensor):
         self._attr_name = "Capacity"
         self._attr_native_unit_of_measurement = "GB"
         self._attr_device_class = SensorDeviceClass.DATA_SIZE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_suggested_display_precision = 2
 
     @property
@@ -919,6 +923,7 @@ class VeeamRepositoryFreeSpaceSensor(VeeamRepositoryBaseSensor):
         self._attr_name = "Free Space"
         self._attr_native_unit_of_measurement = "GB"
         self._attr_device_class = SensorDeviceClass.DATA_SIZE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_suggested_display_precision = 2
 
     @property
@@ -942,6 +947,7 @@ class VeeamRepositoryUsedSpaceSensor(VeeamRepositoryBaseSensor):
         self._attr_name = "Used Space"
         self._attr_native_unit_of_measurement = "GB"
         self._attr_device_class = SensorDeviceClass.DATA_SIZE
+        self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_suggested_display_precision = 2
 
     @property
@@ -964,8 +970,9 @@ class VeeamRepositoryUsedSpacePercentSensor(VeeamRepositoryBaseSensor):
         self._attr_unique_id = (
             f"{config_entry.entry_id}_repository_{self._repo_id}_used_space_percent"
         )
-        self._attr_name = "Used Space"
+        self._attr_name = "Used Percentage"
         self._attr_native_unit_of_measurement = "%"
+        self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_suggested_display_precision = 1
 
     @property
@@ -1033,7 +1040,10 @@ class VeeamRepositoryOnlineStatusSensor(VeeamRepositoryBinarySensorBase):
         repo = self._repository()
         if not repo:
             return None
-        return repo.get("is_online")
+        value = repo.get("is_online")
+        if value is None:
+            return None
+        return bool(value)
 
 
 class VeeamRepositoryOutOfDateSensor(VeeamRepositoryBinarySensorBase):
@@ -1052,7 +1062,10 @@ class VeeamRepositoryOutOfDateSensor(VeeamRepositoryBinarySensorBase):
         repo = self._repository()
         if not repo:
             return None
-        return bool(repo.get("is_out_of_date"))
+        value = repo.get("is_out_of_date")
+        if value is None:
+            return None
+        return bool(value)
 
 
 class VeeamRepositoryImmutableSensor(VeeamRepositoryBinarySensorBase):
@@ -1070,7 +1083,10 @@ class VeeamRepositoryImmutableSensor(VeeamRepositoryBinarySensorBase):
         repo = self._repository()
         if not repo:
             return None
-        return bool(repo.get("is_immutable"))
+        value = repo.get("is_immutable")
+        if value is None:
+            return None
+        return bool(value)
 
     @property
     def icon(self) -> str:
@@ -1118,7 +1134,10 @@ class VeeamRepositoryAccessibleSensor(VeeamRepositoryBinarySensorBase):
         repo = self._repository()
         if not repo:
             return None
-        return bool(repo.get("is_accessible"))
+        value = repo.get("is_accessible")
+        if value is None:
+            return None
+        return bool(value)
 
 
 class VeeamRepositoryCapacityWarningSensor(VeeamRepositoryBinarySensorBase):
