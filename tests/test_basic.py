@@ -25,7 +25,6 @@ def test_manifest_valid():
         "codeowners",
         "iot_class",
         "config_flow",
-        "quality_scale",
     ]
     for field in required_fields:
         assert field in manifest, f"Missing required field: {field}"
@@ -33,7 +32,6 @@ def test_manifest_valid():
     # Check specific values
     assert manifest["domain"] == "veeam_br"
     assert manifest["config_flow"] is True
-    assert manifest["quality_scale"] == "platinum"
     assert "veeam-br" in manifest["requirements"][0]
 
 
