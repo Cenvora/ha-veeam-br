@@ -83,7 +83,8 @@ Each backup job creates a device with the following sensors:
 ### Other Devices
 
 The integration also creates devices for:
-- **Repositories**: Each repository device has sensors for type, capacity, free space, used space, online status, etc.
+- **Repositories**: Each repository device has sensors for type, capacity, free space, used space, online status, etc., and a rescan button.
+- **Scale-Out Backup Repositories (SOBRs)**: Each SOBR device has sensors for description, extent count, and buttons for each extent to enable/disable sealed mode and maintenance mode.
 - **Server**: Server device has sensors for build version, platform, database info, etc.
 - **License**: License device has sensors for status, edition, expiration dates, etc.
 
