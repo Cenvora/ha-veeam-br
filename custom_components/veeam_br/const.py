@@ -109,8 +109,8 @@ def check_api_feature_availability(api_version: str, feature_path: str) -> bool:
     try:
         # Try to import the module/feature
         import_path = f"veeam_br.{api_module}.{feature_path}"
-        importlib.util.find_spec(import_path)
-        return True
+        spec = importlib.util.find_spec(import_path)
+        return spec is not None
     except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
         return False
 
