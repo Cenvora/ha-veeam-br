@@ -14,7 +14,7 @@
         }
       },
       "reauth_confirm": {
-        "title": "Reauthenticate to Veeam Backup & Replication",
+        "title": "Re-authenticate to Veeam Backup & Replication",
         "description": "The authentication credentials for {host} are no longer valid. Please enter new credentials.",
         "data": {
           "username": "Username",
