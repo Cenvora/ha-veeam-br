@@ -1,0 +1,72 @@
+name: Update Version
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  update-manifest:
+    name: Update manifest.json version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG_NAME#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION from tag: $TAG_NAME"
+
+      - name: Update manifest.json
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          MANIFEST_PATH="custom_components/veeam_br/manifest.json"
+          
+          # Update version in manifest.json using Python
+          python -c "
+          import json
+          import sys
+          
+          manifest_path = '$MANIFEST_PATH'
+          version = '$VERSION'
+          
+          try:
+              with open(manifest_path, 'r') as f:
+                  manifest = json.load(f)
+              
+              old_version = manifest.get('version', 'unknown')
+              manifest['version'] = version
+              
+              with open(manifest_path, 'w') as f:
+                  json.dump(manifest, f, indent=2)
+                  f.write('\n')
+              
+              print(f'✓ Updated manifest.json version from {old_version} to {version}')
+          except Exception as e:
+              print(f'Error updating manifest.json: {e}')
+              sys.exit(1)
+          "
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          if git diff --quiet custom_components/veeam_br/manifest.json; then
+            echo "No changes to manifest.json"
+          else
+            git add custom_components/veeam_br/manifest.json
+            git commit -m "chore: update manifest.json version to ${{ steps.version.outputs.version }}"
+            git push origin main
+            echo "✓ Committed and pushed manifest.json update"
+          fi
