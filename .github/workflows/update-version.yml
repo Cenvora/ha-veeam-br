@@ -7,14 +7,16 @@
 # 3. Checks out the repository's default branch (e.g., main)
 # 4. Updates the version field in custom_components/veeam_br/manifest.json
 # 5. Commits and pushes the change back to the default branch
+# 6. Moves the tag to point to the new commit (ensuring tag includes updated manifest.json)
 #
-# Note: This workflow always commits to the default branch, regardless of where
-# the tag originated. Best practice is to create release tags from the default
-# branch to ensure consistency.
+# Note: This workflow always commits to the default branch and moves the tag
+# to point to the commit with the updated manifest.json. This ensures that
+# releases created from the tag will have the correct version in manifest.json.
 #
 # Example:
 # - Tag pushed: v1.2.3
 # - manifest.json version updated to: 1.2.3
+# - Tag v1.2.3 moved to point to the commit with updated manifest.json
 
 name: Update Version
 
@@ -101,3 +103,13 @@ jobs:
             git push origin "${DEFAULT_BRANCH}"
             echo "✓ Committed and pushed manifest.json update"
           fi
+
+      - name: Move tag to updated commit
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          # Move the tag to point to the current HEAD (which now has updated manifest.json)
+          # This ensures releases created from this tag will have the correct version
+          git tag -f "${TAG_NAME}"
+          git push -f origin "${TAG_NAME}"
+          echo "✓ Moved tag ${TAG_NAME} to point to commit with updated manifest.json"
