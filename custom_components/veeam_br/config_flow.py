@@ -218,7 +218,9 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         port_default = user_input.get(CONF_PORT, DEFAULT_PORT) if user_input else DEFAULT_PORT
         username_default = user_input[CONF_USERNAME] if user_input else vol.UNDEFINED
         verify_ssl_default = (
-            user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL) if user_input else DEFAULT_VERIFY_SSL
+            user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+            if user_input
+            else DEFAULT_VERIFY_SSL
         )
 
         data_schema = vol.Schema(
