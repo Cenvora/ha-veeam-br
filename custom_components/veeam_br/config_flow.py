@@ -57,24 +57,16 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     base_url = f"https://{data[CONF_HOST]}:{data[CONF_PORT]}"
 
     try:
-
-        async def _test_connection():
-            vc = VeeamClient(
-                host=base_url,
-                username=data[CONF_USERNAME],
-                password=data[CONF_PASSWORD],
-                api_version=api_version,
-                verify_ssl=data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
-            )
-            await vc.connect()
-            return vc
-
-        vc = await _test_connection()
-
-        # Verify connection was successful by attempting to access the client
-        if not vc:
-            raise PermissionError("Authentication failed")
-
+        vc = VeeamClient(
+            host=base_url,
+            username=data[CONF_USERNAME],
+            password=data[CONF_PASSWORD],
+            api_version=api_version,
+            verify_ssl=data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+        )
+        await vc.connect()
+    except PermissionError:
+        raise
     except Exception as err:
         raise ConnectionError(f"Failed to connect: {err}") from err
 
@@ -217,15 +209,27 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 return self.async_create_entry(title=info["title"], data=user_input)
 
-        api_version_options, api_version_default = _get_api_version_selector_config()
+        api_version_options, api_version_default = _get_api_version_selector_config(
+            user_input.get(CONF_API_VERSION) if user_input else None
+        )
+
+        # Preserve user input on validation failure (except password for security)
+        host_default = user_input[CONF_HOST] if user_input else vol.UNDEFINED
+        port_default = user_input.get(CONF_PORT, DEFAULT_PORT) if user_input else DEFAULT_PORT
+        username_default = user_input[CONF_USERNAME] if user_input else vol.UNDEFINED
+        verify_ssl_default = (
+            user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+            if user_input
+            else DEFAULT_VERIFY_SSL
+        )
 
         data_schema = vol.Schema(
             {
-                vol.Required(CONF_HOST): cv.string,
-                vol.Required(CONF_PORT, default=DEFAULT_PORT): cv.port,
-                vol.Required(CONF_USERNAME): cv.string,
+                vol.Required(CONF_HOST, default=host_default): cv.string,
+                vol.Required(CONF_PORT, default=port_default): cv.port,
+                vol.Required(CONF_USERNAME, default=username_default): cv.string,
                 vol.Required(CONF_PASSWORD): cv.string,
-                vol.Optional(CONF_VERIFY_SSL, default=DEFAULT_VERIFY_SSL): cv.boolean,
+                vol.Optional(CONF_VERIFY_SSL, default=verify_ssl_default): cv.boolean,
                 vol.Optional(
                     CONF_API_VERSION, default=api_version_default
                 ): selector.SelectSelector(

@@ -330,6 +330,77 @@ def test_stale_entity_cleanup_uses_registry_scan():
     )
 
 
+def test_validate_input_reraises_permission_error():
+    """Test that validate_input re-raises PermissionError so callers show correct error.
+
+    If PermissionError is swallowed into ConnectionError, auth failures are incorrectly
+    reported as "Failed to connect" instead of "Invalid authentication credentials".
+    """
+    from pathlib import Path
+    import re
+
+    config_flow_path = (
+        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "config_flow.py"
+    )
+
+    with open(config_flow_path) as f:
+        content = f.read()
+
+    # The validate_input function must re-raise PermissionError before the generic
+    # Exception handler, so that callers can distinguish auth vs connection errors.
+    assert "except PermissionError:" in content, (
+        "validate_input should catch PermissionError separately"
+    )
+    # PermissionError handler must contain a bare 'raise' before the generic except Exception
+    assert re.search(
+        r"except\s+PermissionError\s*:.*?raise.*?except\s+Exception", content, re.DOTALL
+    ), (
+        "validate_input should re-raise PermissionError (not wrap it in ConnectionError)"
+    )
+
+
+def test_user_step_preserves_input_on_error():
+    """Test that the user step form preserves non-sensitive input when re-shown after an error.
+
+    When connection validation fails, the form should pre-fill host, port, and username
+    so the user does not have to retype everything.  The password must never be preserved.
+    """
+    from pathlib import Path
+    import re
+
+    config_flow_path = (
+        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "config_flow.py"
+    )
+
+    with open(config_flow_path) as f:
+        content = f.read()
+
+    # Verify that host, port and username are populated from user_input when present
+    assert "host_default" in content, (
+        "async_step_user should compute host_default from user_input to preserve the field"
+    )
+    assert "username_default" in content, (
+        "async_step_user should compute username_default from user_input to preserve the field"
+    )
+    assert "port_default" in content, (
+        "async_step_user should compute port_default from user_input to preserve the field"
+    )
+
+    # Password must NOT be preserved (security requirement).
+    # Find the async_step_user function body up to the next top-level definition.
+    user_step_match = re.search(
+        r"(async def async_step_user\b.*?)(?=\n    async def |\nclass |\Z)",
+        content,
+        re.DOTALL,
+    )
+    assert user_step_match, "async_step_user should be present"
+    user_step_body = user_step_match.group(0)
+
+    assert "password_default" not in user_step_body, (
+        "async_step_user must NOT define a password_default; password should never be pre-filled"
+    )
+
+
 def test_hlr_immutability_logic():
     """Test that Linux Hardened Repository immutability is extracted from makeRecentBackupsImmutableDays."""
     from pathlib import Path
