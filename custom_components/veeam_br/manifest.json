@@ -11,5 +11,5 @@
   "requirements": [
     "veeam-br>=0.2.0b2,<1.0.0"
   ],
-  "version": "0.4.2"
+  "version": "0.4.3"
 }
