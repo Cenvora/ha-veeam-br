@@ -428,6 +428,7 @@ def test_api_v1_2_rev1_jobs_error_handling():
     that setup succeeds instead of raising UpdateFailed with an opaque dict error.
     """
     from pathlib import Path
+    import re
 
     init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
 
@@ -438,15 +439,24 @@ def test_api_v1_2_rev1_jobs_error_handling():
     # ValueError (the exact dict-construction error reported by the user) and
     # KeyError / AttributeError / TypeError (other parsing failures) are caught
     # and logged rather than propagating to the outer UpdateFailed handler.
-    assert "Failed to parse jobs API response" in content, (
+    # Use a regex to scope checks to the jobs error-handling block around the
+    # "Failed to parse jobs API response" log message.
+    jobs_error_match = re.search(
+        r"(.{0,400}Failed to parse jobs API response.{0,400})",
+        content,
+        flags=re.DOTALL,
+    )
+    assert jobs_error_match is not None, (
         "__init__.py should catch jobs API parsing errors and log them gracefully"
     )
+    jobs_error_block = jobs_error_match.group(1)
+
     # The per-job inner loop must also catch ValueError (e.g. unknown enum values)
     # not just AttributeError/TypeError as before.
-    # Check that all four exception types are present in the jobs outer try/except block
-    # without requiring a specific tuple order.
+    # Check that all four exception types are present within the jobs outer
+    # try/except block, without requiring a specific tuple order.
     for exc_type in ("ValueError", "KeyError", "AttributeError", "TypeError"):
-        assert exc_type in content, (
+        assert exc_type in jobs_error_block, (
             f"__init__.py jobs outer try/except should catch {exc_type}"
         )
 
