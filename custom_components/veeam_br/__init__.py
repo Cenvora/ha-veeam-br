@@ -164,8 +164,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     api_version,
                     err,
                 )
-            except Exception as err:
-                raise UpdateFailed(f"Error communicating with jobs API: {err}") from err
+            except Exception:
+                # Let the top-level coordinator handler wrap this in UpdateFailed once.
+                raise
 
             # Fetch server information
             server_info = None
