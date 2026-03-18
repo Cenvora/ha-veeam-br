@@ -108,16 +108,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Mark as connected
             connected = True
 
-            # Fetch jobs data
-            jobs_api = await asyncio.to_thread(veeam_client.api, "jobs")
-            jobs_response = await veeam_client.call(jobs_api.get_all_jobs_states)
-
-            if not jobs_response:
-                raise UpdateFailed("Jobs API returned no data")
-
-            # Access the .data field from JobStatesResult
-            jobs_data = jobs_response.data if jobs_response else []
-
             # Helper function to safely get enum value
             def get_enum_value(enum_val, default="unknown"):
                 """Extract enum value, handling both enum types and UNSET."""
@@ -135,22 +125,55 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     return None
                 return dt_val
 
+            # Fetch jobs data — wrapped in try/except so a parsing failure (e.g.
+            # an API-version mismatch in the veeam_br library causing a ValueError
+            # from dict()) degrades gracefully rather than aborting the whole setup.
             jobs_list = []
-            for job in jobs_data:
-                try:
-                    job_dict = {
-                        "id": str(job.id),
-                        "name": job.name or "Unknown",
-                        "type": get_enum_value(job.type_),
-                        "status": get_enum_value(job.status),
-                        "last_result": get_enum_value(job.last_result),
-                        "last_run": get_datetime_value(job.last_run),
-                        "next_run": get_datetime_value(job.next_run),
-                    }
-                    jobs_list.append(job_dict)
-                except (AttributeError, TypeError) as err:
-                    _LOGGER.warning("Failed to parse job: %s", err)
-                    continue
+            try:
+                jobs_api = await asyncio.to_thread(veeam_client.api, "jobs")
+                jobs_response = await veeam_client.call(jobs_api.get_all_jobs_states)
+
+                if not jobs_response or not hasattr(jobs_response, "data"):
+                    _LOGGER.warning(
+                        "Jobs API returned no data or an unexpected response object (%s); "
+                        "job sensors will be unavailable",
+                        type(jobs_response).__name__,
+                    )
+                else:
+                    jobs_data = jobs_response.data
+
+                    for job in jobs_data:
+                        try:
+                            job_dict = {
+                                "id": str(job.id),
+                                "name": job.name or "Unknown",
+                                "type": get_enum_value(job.type_),
+                                "status": get_enum_value(job.status),
+                                "last_result": get_enum_value(job.last_result),
+                                "last_run": get_datetime_value(job.last_run),
+                                "next_run": get_datetime_value(job.next_run),
+                            }
+                            jobs_list.append(job_dict)
+                        except (ValueError, KeyError, AttributeError, TypeError) as err:
+                            job_id = getattr(job, "id", "Unknown")
+                            job_name = getattr(job, "name", "Unknown")
+                            _LOGGER.warning(
+                                "Failed to parse job (id=%s, name=%s): %s",
+                                job_id,
+                                job_name,
+                                err,
+                            )
+                            continue
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning(
+                    "Failed to parse jobs API response (API version %s may not be fully "
+                    "compatible): %s",
+                    api_version,
+                    err,
+                )
+            except Exception:
+                # Let the top-level coordinator handler wrap this in UpdateFailed once.
+                raise
 
             # Fetch server information
             server_info = None
@@ -406,7 +429,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 repo_dict.get("name"),
                                 repo_dict.get("type"),
                             )
-                        except (AttributeError, TypeError) as err:
+                        except (ValueError, KeyError, AttributeError, TypeError) as err:
                             _LOGGER.warning(
                                 "Failed to parse repository %s: %s",
                                 getattr(repo, "name", "Unknown"),
@@ -451,14 +474,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                     and sobr.performance_tier.performance_extents
                                 ):
                                     for extent in sobr.performance_tier.performance_extents:
+                                        # In API v1.2-rev1, extent.status is a single
+                                        # ERepositoryExtentStatusType (a str-subclass enum),
+                                        # not a list.  In v1.3-rev1+ it is a list.
+                                        # Handle both forms so iterating over the enum's
+                                        # string characters (which would raise AttributeError
+                                        # on .value for each char) is avoided.
+                                        raw_status = (
+                                            extent.status if extent.status is not UNSET else []
+                                        )
+                                        if isinstance(raw_status, list):
+                                            status_values = [s.value for s in raw_status]
+                                        elif hasattr(raw_status, "value"):
+                                            status_values = [raw_status.value]
+                                        else:
+                                            status_values = []
                                         extent_dict = {
                                             "id": get_uuid_value(extent.id),
                                             "name": extent.name or "Unknown",
-                                            "status": (
-                                                [s.value for s in extent.status]
-                                                if extent.status is not UNSET
-                                                else []
-                                            ),
+                                            "status": status_values,
                                         }
                                         extents.append(extent_dict)
                                 sobr_dict["extents"] = extents
@@ -475,7 +509,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 sobr_dict.get("id"),
                                 len(sobr_dict.get("extents", [])),
                             )
-                        except (AttributeError, TypeError) as err:
+                        except (ValueError, KeyError, AttributeError, TypeError) as err:
                             _LOGGER.warning(
                                 "Failed to parse SOBR %s: %s",
                                 getattr(sobr, "name", "Unknown"),

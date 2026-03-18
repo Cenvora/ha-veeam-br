@@ -418,3 +418,72 @@ def test_hlr_immutability_logic():
     assert '"is_immutable" not in repo_dict' in content, (
         "HLR immutability check should only run when S3 immutability was not already found"
     )
+
+
+def test_api_v1_2_rev1_jobs_error_handling():
+    """Test that jobs API errors are handled gracefully for v1.2-rev1 compatibility.
+
+    In API v1.2-rev1 the veeam_br library may raise ValueError (from dict(string))
+    when parsing some response fields. The integration must catch those errors so
+    that setup succeeds instead of raising UpdateFailed with an opaque dict error.
+    """
+    from pathlib import Path
+    import re
+
+    init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
+
+    with open(init_path) as f:
+        content = f.read()
+
+    # Jobs section must now be wrapped in its own try/except so that
+    # ValueError (the exact dict-construction error reported by the user) and
+    # KeyError / AttributeError / TypeError (other parsing failures) are caught
+    # and logged rather than propagating to the outer UpdateFailed handler.
+    # Use a regex to scope checks to the jobs error-handling block around the
+    # "Failed to parse jobs API response" log message.
+    jobs_error_match = re.search(
+        r"(.{0,400}Failed to parse jobs API response.{0,400})",
+        content,
+        flags=re.DOTALL,
+    )
+    assert jobs_error_match is not None, (
+        "__init__.py should catch jobs API parsing errors and log them gracefully"
+    )
+    jobs_error_block = jobs_error_match.group(1)
+
+    # The per-job inner loop must also catch ValueError (e.g. unknown enum values)
+    # not just AttributeError/TypeError as before.
+    # Check that all four exception types are present within the jobs outer
+    # try/except block, without requiring a specific tuple order.
+    for exc_type in ("ValueError", "KeyError", "AttributeError", "TypeError"):
+        assert exc_type in jobs_error_block, (
+            f"__init__.py jobs outer try/except should catch {exc_type}"
+        )
+
+
+def test_api_v1_2_rev1_sobr_extent_status():
+    """Test that SOBR extent status is handled for both API versions.
+
+    In v1.2-rev1 PerformanceExtentModel.status is a single ERepositoryExtentStatusType
+    (a str-subclass enum).  In v1.3-rev1+ it is a list[ERepositoryExtentStatusType].
+    The old code did `[s.value for s in extent.status]` which, for a str-enum, iterates
+    over individual characters, raising AttributeError on each character's missing .value.
+    The fix must handle both the list form and the single-enum form.
+    """
+    from pathlib import Path
+
+    init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
+
+    with open(init_path) as f:
+        content = f.read()
+
+    # The new code must check whether status is a list or a single enum value.
+    assert "isinstance(raw_status, list)" in content, (
+        "__init__.py should check if extent.status is a list before iterating "
+        "(v1.2-rev1 returns a single enum, v1.3-rev1+ returns a list)"
+    )
+    # Old pattern that directly iterates the status (breaks for str-enum) must be gone.
+    assert "[s.value for s in extent.status]" not in content, (
+        "__init__.py must not iterate directly over extent.status — "
+        "that fails when status is a str-subclass enum (v1.2-rev1)"
+    )
