@@ -155,7 +155,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             }
                             jobs_list.append(job_dict)
                         except (ValueError, KeyError, AttributeError, TypeError) as err:
-                            _LOGGER.warning("Failed to parse job: %s", err)
+                            job_id = getattr(job, "id", "Unknown")
+                            job_name = getattr(job, "name", "Unknown")
+                            _LOGGER.warning(
+                                "Failed to parse job (id=%s, name=%s): %s",
+                                job_id,
+                                job_name,
+                                err,
+                            )
                             continue
             except (ValueError, KeyError, AttributeError, TypeError) as err:
                 _LOGGER.warning(
