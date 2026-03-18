@@ -472,7 +472,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                         # Handle both forms so iterating over the enum's
                                         # string characters (which would raise AttributeError
                                         # on .value for each char) is avoided.
-                                        raw_status = extent.status if extent.status is not UNSET else []
+                                        raw_status = (
+                                            extent.status if extent.status is not UNSET else []
+                                        )
                                         if isinstance(raw_status, list):
                                             status_values = [s.value for s in raw_status]
                                         elif hasattr(raw_status, "value"):
