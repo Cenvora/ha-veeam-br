@@ -23,6 +23,7 @@ from .const import (
     DOMAIN,
     UPDATE_INTERVAL,
 )
+from .sdk_patches import patch_models as patch_null_timestamp_models
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +48,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except ImportError as err:
         _LOGGER.error("Failed to import veeam_br types: %s", err)
         return False
+
+    # Teach the generated models to tolerate null timestamps before anything parses a
+    # response, or one unscheduled job hides every job (issue #83). Imports are blocking,
+    # so patching runs off the event loop.
+    def patch_models() -> int:
+        return patch_null_timestamp_models(
+            lambda name: importlib.import_module(f"veeam_br.{api_module}.models.{name}"),
+            UNSET,
+        )
+
+    try:
+        patched = await asyncio.to_thread(patch_models)
+        _LOGGER.debug("Patched %d model modules to tolerate null timestamps", patched)
+    except Exception as err:  # noqa: BLE001 - never block setup over a resilience patch
+        _LOGGER.warning(
+            "Could not patch veeam_br models for null timestamps (%s); jobs with no "
+            "schedule or no previous run may fail to load. See "
+            "https://github.com/Cenvora/ha-veeam-br/issues/83",
+            err,
+        )
 
     # Pre-import API modules to avoid blocking calls in event loop
     # The veeam_br library uses dynamic imports which can block the event loop

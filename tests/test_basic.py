@@ -495,6 +495,37 @@ def test_api_v1_2_rev1_sobr_extent_status():
     )
 
 
+def test_null_timestamp_patch_is_applied_before_any_request():
+    """Test that the null-timestamp patch is applied during setup (issue #83).
+
+    VBR sends nextRun=null for an unscheduled job, which makes the generated model reject
+    the whole jobs response. The patch must land before the first API call, or the first
+    refresh still loses every job. (The patch itself is tested in test_sdk_patches.py.)
+    """
+    from pathlib import Path
+
+    init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
+
+    with open(init_path) as f:
+        content = f.read()
+
+    assert (
+        "from .sdk_patches import" in content
+    ), "__init__.py should apply the model patches from sdk_patches"
+
+    patch_call = content.index("patch_null_timestamp_models(")
+    connect_call = content.index("await veeam_client.connect()")
+    assert patch_call < connect_call, (
+        "models must be patched before the client connects, so no response is parsed by "
+        "an unpatched model"
+    )
+
+    # Patching imports modules, which blocks; it must not run on the event loop.
+    assert (
+        "await asyncio.to_thread(patch_models)" in content
+    ), "model patching does blocking imports and should run via asyncio.to_thread"
+
+
 def _load_const():
     """Load const.py standalone.
 
