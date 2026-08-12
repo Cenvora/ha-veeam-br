@@ -442,7 +442,9 @@ attribute, so automations that need to match exactly have something stable:
 - **Veeam Community Edition / unlicensed servers**: Not supported. The integration detects
   this and raises a repair warning, but keeps running — see [Licensing](#licensing).
 - **API Version Compatibility**: Requires Veeam B&R 12.1 or newer
-- **Stale Devices**: Deleted jobs/repositories remain as devices until manual removal (planned enhancement)
+- **Stale Devices**: A job or repository deleted in Veeam is removed automatically on the next
+  poll. If the server reports none of a kind at all — which is indistinguishable from a failed
+  fetch — nothing is pruned automatically; use the device's **Delete** button instead.
 - **Large Deployments**: Polling 100+ jobs may take several seconds per cycle
 - **Real-time Updates**: Changes reflected every 60 seconds, not immediately
 - **SSL Certificates**: Self-signed certificates require SSL verification to be disabled

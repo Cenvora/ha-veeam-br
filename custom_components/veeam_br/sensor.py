@@ -282,6 +282,23 @@ async def async_setup_entry(
                     _LOGGER.info("Removing stale SOBR entity: %s", entity.entity_id)
                     entity_reg.async_remove(entity.entity_id)
 
+        # An empty collection is indistinguishable from a fetch that failed and degraded
+        # gracefully, so pruning on empty would delete every job device the first time the
+        # jobs endpoint errored. Deleting the last job of a kind is left to the per-device
+        # Delete button, which async_remove_config_entry_device now allows.
+        prunable = {
+            "job_": bool(current_jobs_in_data),
+            "repository_": bool(current_repos_in_data),
+            "sobr_": bool(current_sobrs_in_data),
+        }
+        for prefix, allowed in prunable.items():
+            if not allowed:
+                _LOGGER.debug(
+                    "Not pruning %s devices: nothing reported this cycle, which may be a "
+                    "failed fetch rather than a deletion",
+                    prefix.rstrip("_"),
+                )
+
         # Remove orphaned devices for jobs/repos/sobrs no longer present in API data.
         for device in list(dr.async_entries_for_config_entry(device_reg, entry_id)):
             for domain, identifier in device.identifiers:
@@ -289,19 +306,19 @@ async def async_setup_entry(
                     continue
                 if identifier.startswith("job_"):
                     job_id = identifier[len("job_") :]
-                    if job_id not in current_jobs_in_data:
+                    if job_id not in current_jobs_in_data and prunable["job_"]:
                         _LOGGER.info("Removing stale job device: %s", device.name)
                         device_reg.async_remove_device(device.id)
                         break
                 elif identifier.startswith("repository_"):
                     repo_id = identifier[len("repository_") :]
-                    if repo_id not in current_repos_in_data:
+                    if repo_id not in current_repos_in_data and prunable["repository_"]:
                         _LOGGER.info("Removing stale repository device: %s", device.name)
                         device_reg.async_remove_device(device.id)
                         break
                 elif identifier.startswith("sobr_"):
                     sobr_id = identifier[len("sobr_") :]
-                    if sobr_id not in current_sobrs_in_data:
+                    if sobr_id not in current_sobrs_in_data and prunable["sobr_"]:
                         _LOGGER.info("Removing stale SOBR device: %s", device.name)
                         device_reg.async_remove_device(device.id)
                         break
