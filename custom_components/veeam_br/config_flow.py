@@ -16,6 +16,7 @@ import voluptuous as vol
 
 from .const import (
     API_VERSIONS,
+    AUTO_API_VERSION,
     CONF_API_VERSION,
     CONF_VERIFY_SSL,
     DEFAULT_API_MODULE,
@@ -32,20 +33,57 @@ _LOGGER = logging.getLogger(__name__)
 def _get_api_version_selector_config(
     preferred_version: str | None = None,
 ) -> tuple[list[str], str]:
-    """Get API version options and default for selector."""
-    api_version_options = list(API_VERSIONS.keys())
+    """Get API version options and default for selector.
+
+    AUTO_API_VERSION leads the list and is the default, so the common case is not asking
+    the user to know which revision their server speaks.
+    """
+    api_version_options = [AUTO_API_VERSION, *API_VERSIONS.keys()]
 
     if preferred_version and preferred_version in api_version_options:
         return api_version_options, preferred_version
 
-    if DEFAULT_API_VERSION in api_version_options:
-        return api_version_options, DEFAULT_API_VERSION
+    return api_version_options, AUTO_API_VERSION
 
-    if api_version_options:
-        return api_version_options, api_version_options[0]
 
-    _LOGGER.error("No API versions available, using fallback")
-    return [DEFAULT_API_VERSION], DEFAULT_API_VERSION
+async def async_resolve_api_version(data: dict[str, Any]) -> str:
+    """Resolve the configured API version, detecting it when set to auto.
+
+    Detection probes the server's Swagger documents (see veeam_br.discovery) and needs no
+    credentials, so it runs before the connection is validated. It is best-effort: a server
+    with Swagger disabled or gated reports nothing, and the static default is used instead
+    of failing setup.
+    """
+    api_version = data.get(CONF_API_VERSION, AUTO_API_VERSION)
+    if api_version != AUTO_API_VERSION:
+        return api_version
+
+    from veeam_br.discovery import detect_api_version
+
+    base_url = f"https://{data[CONF_HOST]}:{data[CONF_PORT]}"
+    verify_ssl = data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
+
+    try:
+        detected = await detect_api_version(
+            base_url,
+            verify_ssl=verify_ssl,
+            versions=list(API_VERSIONS),
+        )
+    except Exception as err:  # noqa: BLE001 - detection must never fail the flow
+        _LOGGER.debug("API version detection failed: %s", err)
+        detected = None
+
+    if detected is None:
+        _LOGGER.info(
+            "Could not detect the API version of %s; using %s. Select a version manually "
+            "if this server needs a different one",
+            data[CONF_HOST],
+            DEFAULT_API_VERSION,
+        )
+        return DEFAULT_API_VERSION
+
+    _LOGGER.info("Detected API version %s on %s", detected, data[CONF_HOST])
+    return detected
 
 
 def _load_veeam_br(api_version: str):
@@ -78,8 +116,14 @@ def _load_veeam_br(api_version: str):
 
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect."""
-    api_version = data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
+    """Validate the user input allows us to connect.
+
+    Mutates data[CONF_API_VERSION] when it is set to auto, so the caller stores the resolved
+    version rather than the sentinel: a server upgrade must not silently move an existing
+    entry onto a newer revision, where enum values are renamed and fields added.
+    """
+    api_version = await async_resolve_api_version(data)
+    data[CONF_API_VERSION] = api_version
 
     try:
         VeeamClient = await hass.async_add_executor_job(_load_veeam_br, api_version)
@@ -296,9 +340,15 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
                 _LOGGER.exception("Unexpected exception validating options")
                 errors["base"] = "unknown"
             else:
-                return self.async_create_entry(title="", data=user_input)
+                # validate_input resolved auto into a concrete version; store that rather
+                # than the sentinel, so the entry keeps talking the same revision after a
+                # server upgrade
+                return self.async_create_entry(
+                    title="",
+                    data={**user_input, CONF_API_VERSION: test_data[CONF_API_VERSION]},
+                )
 
-        api_version_options = list(API_VERSIONS.keys())
+        api_version_options = [AUTO_API_VERSION, *API_VERSIONS.keys()]
 
         current_api_version = self.config_entry.options.get(
             CONF_API_VERSION,

@@ -18,7 +18,7 @@
           "username": "Username with administrator privileges",
           "password": "Password for the specified user account",
           "verify_ssl": "Enable SSL certificate verification (disable only for self-signed certificates)",
-          "api_version": "Veeam REST API version to use"
+          "api_version": "Leave on 'auto' to detect the newest API version this server serves, or pick a version to pin it."
         }
       },
       "reconfigure": {
@@ -75,7 +75,7 @@
           "api_version": "API Version"
         },
         "data_description": {
-          "api_version": "Select the Veeam REST API version to use for this integration"
+          "api_version": "Select 'auto' to re-detect the newest API version this server serves."
         }
       }
     },

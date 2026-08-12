@@ -631,10 +631,11 @@ def test_manifest_requires_a_recent_enough_veeam_br():
     requirement = next(r for r in manifest["requirements"] if r.startswith("veeam-br"))
 
     # Floors we depend on, newest first:
+    #   0.4.0 — veeam_br.discovery.detect_api_version, used to auto-detect the version
     #   0.3.1 — VeeamClient recovers from a refused token refresh instead of leaving a
     #           dead session behind (issue #82)
     #   0.3.0 — first release shipping the v1_3_rev2 SDK
-    minimum = (0, 3, 1)
+    minimum = (0, 4, 0)
 
     match = re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", requirement)
     assert match, f"veeam-br requirement should pin a minimum version, got {requirement}"

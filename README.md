@@ -17,6 +17,7 @@ This project is an independent, open source project. It is not affiliated with, 
 ## Features
 
 - 🔧 **UI Configuration Flow**: Easy setup through Home Assistant's UI
+- 🔎 **API Version Auto-Detection**: Finds the newest REST API revision your server serves
 - 📊 **Job Monitoring**: Track all backup jobs and their current status
 - 🔄 **Automatic Updates**: Polls the Veeam server every 60 seconds
 - 🎨 **Dynamic Icons**: Visual indicators based on job status (success, running, failed, warning)
@@ -31,9 +32,20 @@ This project is an independent, open source project. It is not affiliated with, 
 ### Supported API Versions
 
 The **API Version** option selects the REST API revision used against your server. It
-defaults to the newest revision; on an older server, pick the revision matching your VBR
-release. Veeam also serves older revisions to newer servers, so a lower revision is a safe
-choice if you are unsure.
+defaults to **auto**, which probes the server and picks the newest revision it serves, so you
+do not need to know your VBR build. Pick a specific revision to pin it instead.
+
+Detection works by asking the server which Swagger documents it publishes — Veeam's REST API
+has no endpoint that reports its own supported versions, and
+[Veeam's guidance](https://community.veeam.com/discussion-boards-66/for-veeam-backup-and-replication-rest-apis-x-api-version-header-for-example-1-3-rev1-can-be-obtained-from-a-rest-api-13741)
+is that the caller chooses one. If the Swagger endpoints are unreachable or disabled,
+detection is skipped and the newest supported revision is used; select a revision manually if
+that is wrong for your server.
+
+The detected revision is **resolved once** and stored, when the entry is created or its
+options are changed. Upgrading VBR does not silently move an existing entry onto a newer
+revision — re-run **Configure** and choose *auto* again to pick up a newer one. Veeam also
+serves older revisions to newer servers, so a pinned lower revision stays a safe choice.
 
 | VBR Version | API Version | Notes |
 | ----------- | ----------- | ----- |
@@ -82,7 +94,8 @@ The integration supports the following configuration options:
 #### Optional Parameters
 - **Verify SSL**: Enable/disable SSL certificate verification (default: enabled)
   - Disable only if using self-signed certificates in a trusted environment
-- **API Version**: Select the Veeam REST API version to use (configured via integration options)
+- **API Version**: REST API revision to use. Defaults to *auto*, which detects the newest
+  revision the server serves (configured via integration options)
 
 ### Via UI (Recommended)
 
