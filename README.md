@@ -27,7 +27,8 @@ This project is an independent, open source project. It is not affiliated with, 
 ## Requirements
 
 - Home Assistant 2023.1.0 or newer
-- Veeam Backup & Replication server with REST API enabled (Community Edition not supported)
+- Veeam Backup & Replication server with the REST API enabled, on a supported license
+  (see [Licensing](#licensing))
 
 ### Supported API Versions
 
@@ -330,9 +331,29 @@ All devices and entities associated with this integration will be removed.
 - Polling interval is set to 60 seconds to balance freshness and load
 - Consider adjusting via code if needed for very large deployments
 
+## Licensing
+
+This integration is developed and tested against licensed Veeam Backup & Replication
+installations (Enterprise, Enterprise Plus, Standard, and evaluation or NFR licenses).
+
+**Community Edition, and servers with no license installed, are not supported.** Entitlements
+differ between editions, and some REST API endpoints answer differently or not at all, so
+entities can be missing or unreliable in ways that look like integration bugs.
+
+The integration reads the license edition it is already polling for and, if it finds an
+unsupported one, raises a warning under **Settings → Repairs** and logs it on every reload.
+Nothing is blocked: if the integration works for you on Community Edition, it keeps working.
+The warning exists so that unexplained behaviour has an obvious first suspect, and it clears
+itself once the server reports a supported license.
+
+If you report a problem, please include the license edition — the diagnostics download
+(⋮ → *Download diagnostics*) contains it, along with the API version and library version, and
+no credentials.
+
 ## Known Limitations
 
-- **Veeam Community Edition**: Not supported (lacks REST API)
+- **Veeam Community Edition / unlicensed servers**: Not supported. The integration detects
+  this and raises a repair warning, but keeps running — see [Licensing](#licensing).
 - **API Version Compatibility**: Requires Veeam B&R 12.1 or newer
 - **Stale Devices**: Deleted jobs/repositories remain as devices until manual removal (planned enhancement)
 - **Large Deployments**: Polling 100+ jobs may take several seconds per cycle

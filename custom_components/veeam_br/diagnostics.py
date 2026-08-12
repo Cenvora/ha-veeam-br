@@ -7,6 +7,21 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .const import CONF_API_VERSION, DEFAULT_API_VERSION
+from .licensing import unsupported_license_reason
+
+
+def _veeam_br_version() -> str:
+    """Version of the installed veeam-br library, or why it could not be read."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("veeam-br")
+    except PackageNotFoundError:
+        return "not installed"
+    except Exception as err:  # noqa: BLE001 - diagnostics must never raise
+        return f"unknown ({err})"
+
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: ConfigEntry
@@ -25,6 +40,11 @@ async def async_get_config_entry_diagnostics(
             "domain": entry.domain,
             "title": entry.title,
             "unique_id": entry.unique_id,
+            # First questions in any bug report: which API revision, and which library
+            "api_version": entry.options.get(
+                CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
+            ),
+            "veeam_br_version": _veeam_br_version(),
         },
         "coordinator": {
             "last_update_success": coordinator.last_update_success,
@@ -60,6 +80,8 @@ async def async_get_config_entry_diagnostics(
             "status": license_info.get("status"),
             "edition": license_info.get("edition"),
             "type": license_info.get("type"),
+            # Names the licensing limitation instead of leaving it to be inferred
+            "unsupported_reason": unsupported_license_reason(license_info),
         }
 
     # Add job summaries (without sensitive details)

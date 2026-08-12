@@ -1,0 +1,147 @@
+name: Bug report
+description: Something is not working — missing entities, errors in the log, failed setup
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        Most reports come down to a handful of things: which Veeam build you run, which REST
+        API revision the integration is using, and what your license entitles. The fields
+        below ask for exactly those, so please fill them in — it is usually the difference
+        between a same-day fix and a long back-and-forth.
+
+        **The fastest thing you can attach is a diagnostics download**: Settings → Devices &
+        Services → Veeam Backup & Replication → ⋮ → *Download diagnostics*. It contains the
+        API version, the veeam-br version, your license edition and server build, with no
+        credentials.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Add the integration against a 13.1 server
+        2. …
+    validations:
+      required: false
+
+  - type: input
+    id: vbr-version
+    attributes:
+      label: Veeam Backup & Replication version
+      description: Full build number, e.g. 13.1.0.411. Help → About in the VBR console.
+      placeholder: "13.1.0.411"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: license-edition
+    attributes:
+      label: Veeam license edition
+      description: |
+        License → shown in the VBR console, or in the integration's License device.
+        Community Edition and unlicensed servers are not supported — the integration raises a
+        repair warning for those — but please still report what you see.
+      options:
+        - Enterprise Plus
+        - Enterprise
+        - Standard
+        - Community (free)
+        - No license installed
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: api-version
+    attributes:
+      label: Selected API version
+      description: |
+        Settings → Devices & Services → Veeam Backup & Replication → Configure. If you left it
+        on *auto*, pick the revision shown in diagnostics.
+      options:
+        - "auto (detected)"
+        - "1.3-rev2"
+        - "1.3-rev1"
+        - "1.3-rev0"
+        - "1.2-rev1"
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: integration-version
+    attributes:
+      label: Integration version
+      description: HACS, or the `version` field in `manifest.json`.
+      placeholder: "0.5.0b1"
+    validations:
+      required: true
+
+  - type: input
+    id: veeam-br-version
+    attributes:
+      label: veeam-br library version
+      description: From the diagnostics download, or `pip show veeam-br`.
+      placeholder: "0.4.0"
+    validations:
+      required: false
+
+  - type: input
+    id: ha-version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.8.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-type
+    attributes:
+      label: Home Assistant installation type
+      options:
+        - Home Assistant OS
+        - Home Assistant Supervised
+        - Home Assistant Container
+        - Home Assistant Core (venv)
+        - Other
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: |
+        Settings → System → Logs, or `home-assistant.log`. Enable debug logging first for far
+        more detail:
+
+        ```yaml
+        logger:
+          logs:
+            custom_components.veeam_br: debug
+        ```
+
+        Please paste the text rather than a screenshot, and redact hostnames if you need to.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Attach or paste the diagnostics download. It contains no credentials.
+      render: json
+    validations:
+      required: false
