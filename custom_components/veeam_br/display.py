@@ -84,6 +84,12 @@ OVERRIDES = {
     "scaleout": "Scale-out",
     "cifs": "SMB share",
     "nfs": "NFS share",
+    # Proxy types (EProxyType)
+    "generalpurposeproxy": "General purpose",
+    "viproxy": "VMware",
+    "hvproxy": "Hyper-V",
+    "nutanixahv": "Nutanix AHV",
+    "pve": "Proxmox VE",
     # Patroni node roles and states, from the HA cluster
     "standbyleader": "Standby leader",
     "syncstandby": "Sync standby",

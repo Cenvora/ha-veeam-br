@@ -1,0 +1,111 @@
+blueprint:
+  name: Veeam backup proxy offline
+  description: >-
+    Notify when a Veeam backup proxy goes offline, and again when it comes back.
+
+    A proxy that is offline does not fail jobs immediately — Veeam reassigns work to whatever
+    proxies remain — so this often goes unnoticed until backups start taking noticeably longer
+    or a job has nowhere to run.
+
+    Pick the **Online** sensors of the proxies to watch. A proxy that is deliberately disabled
+    reports offline too, so the blueprint can skip proxies you have disabled on purpose.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/proxy_offline.yaml
+  author: Cenvora
+  input:
+    proxy_online_sensors:
+      name: Proxy Online sensors
+      description: One or more Veeam proxy "Online" sensors.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: veeam_br
+              domain: binary_sensor
+    offline_for:
+      name: Offline for
+      description: >-
+        How long the proxy must stay offline before notifying, so a restart of the proxy host
+        does not raise an alert.
+      default:
+        minutes: 5
+      selector:
+        duration:
+    ignore_disabled:
+      name: Ignore proxies you have disabled
+      description: >-
+        A disabled proxy is offline by design. Requires the proxy's **Enabled** sensor to exist
+        (it does by default).
+      default: true
+      selector:
+        boolean:
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run when a proxy goes offline. Available variables: `proxy_name`,
+        `proxy_entity_id`, and ready-made `title` and `message`.
+      selector:
+        action:
+    recovery_action:
+      name: Recovery action
+      description: Optional. What to run when the proxy comes back online.
+      default: []
+      selector:
+        action:
+
+mode: queued
+max: 20
+
+triggers:
+  - trigger: state
+    entity_id: !input proxy_online_sensors
+    from: "on"
+    to: "off"
+    for: !input offline_for
+    id: offline
+  - trigger: state
+    entity_id: !input proxy_online_sensors
+    from: "off"
+    to: "on"
+    id: online
+
+variables:
+  ignore_disabled: !input ignore_disabled
+  proxy_entity_id: "{{ trigger.entity_id }}"
+  # Each proxy is its own device, so the device name is the proxy name
+  proxy_name: >-
+    {{ device_attr(trigger.entity_id, 'name_by_user')
+       or device_attr(trigger.entity_id, 'name')
+       or trigger.to_state.name | replace(' Online', '') }}
+  # The Enabled sensor lives on the same device, so it can be found by walking its entities
+  enabled_entity: >-
+    {{ device_entities(device_id(trigger.entity_id))
+       | select('search', '_enabled$') | list | first | default('') }}
+  proxy_disabled: >-
+    {{ enabled_entity != '' and states(enabled_entity) == 'off' }}
+  title: >-
+    {{ 'Veeam proxy offline: ' ~ proxy_name
+       if trigger.id == 'offline'
+       else 'Veeam proxy back online: ' ~ proxy_name }}
+  message: >-
+    {{ 'Backup proxy ' ~ proxy_name ~ ' has been offline for a while. Jobs will run on the '
+       ~ 'remaining proxies, which may make them slower.'
+       if trigger.id == 'offline'
+       else 'Backup proxy ' ~ proxy_name ~ ' is online again.' }}
+
+conditions:
+  # A reload takes every entity through unavailable, and both triggers pin from/to, so a
+  # restart cannot re-alert. This guards the disabled-on-purpose case instead.
+  - condition: template
+    value_template: "{{ not (ignore_disabled and proxy_disabled) }}"
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: offline
+        sequence: !input notification_action
+      - conditions:
+          - condition: trigger
+            id: online
+        sequence: !input recovery_action
