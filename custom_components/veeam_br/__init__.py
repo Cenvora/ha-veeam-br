@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import timedelta, timezone
 import importlib
 import logging
 import sys
@@ -23,12 +23,105 @@ from .const import (
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     UPDATE_INTERVAL,
+    check_api_feature_availability,
 )
 from .sdk_patches import patch_models as patch_null_values_in_models
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
+
+# High Availability cluster endpoints exist only from API 1.3-rev2 (VBR 13.1)
+HA_CLUSTER_FEATURE = "api.high_availability_ha_cluster"
+
+
+def _bool_or_none(obj, name: str) -> bool | None:
+    """Read a boolean off a model, mapping UNSET and anything unexpected to None."""
+    value = getattr(obj, name, None)
+    return value if isinstance(value, bool) else None
+
+
+def _parse_ha_cluster_node(node, get_enum_value, get_uuid_value) -> dict | None:
+    """Flatten one HA cluster node into coordinator data."""
+    if not node or not hasattr(node, "name"):
+        return None
+
+    external_endpoint = getattr(node, "external_endpoint", None)
+    if not isinstance(external_endpoint, str):
+        external_endpoint = None
+
+    lag_mb = getattr(node, "lag_mb", None)
+
+    return {
+        "id": get_uuid_value(getattr(node, "id", None)),
+        "name": getattr(node, "name", None) or "Unknown",
+        "ip_address": getattr(node, "ip_address", None) or None,
+        "fqdn": getattr(node, "fqdn", None) or None,
+        "role": get_enum_value(getattr(node, "role", None)),
+        "state": get_enum_value(getattr(node, "state", None)),
+        "timeline": getattr(node, "timeline", None) or None,
+        "lag_mb": lag_mb if isinstance(lag_mb, (int, float)) else None,
+        "external_endpoint": external_endpoint,
+    }
+
+
+def _parse_ha_cluster_last_online(raw_value):
+    """Parse lastOnlineTimeUtc, which Veeam's schema types as a plain string.
+
+    Timestamp sensors need an aware datetime, and the field is documented as UTC, so a
+    value carrying no offset is stamped UTC rather than assumed local.
+    """
+    if not isinstance(raw_value, str) or not raw_value:
+        return None
+
+    parsed = dt_util.parse_datetime(raw_value)
+    if parsed is None:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _parse_ha_cluster(cluster, get_enum_value, get_uuid_value, serialize_value) -> dict:
+    """Flatten the HA cluster configuration and its state into coordinator data."""
+    states = getattr(cluster, "states", None)
+
+    def state_flag(name: str) -> bool | None:
+        # states itself is optional in the schema
+        return _bool_or_none(states, name) if states else None
+
+    parsed = {
+        "id": get_uuid_value(getattr(cluster, "id", None)),
+        "name": getattr(cluster, "name", None) or "HA Cluster",
+        "cluster_endpoint": getattr(cluster, "cluster_endpoint", None) or None,
+        "cluster_dns_name": getattr(cluster, "cluster_dns_name", None) or None,
+        "is_cross_subnet_mode": _bool_or_none(cluster, "is_cross_subnet_mode"),
+        "is_online": state_flag("is_online"),
+        "is_failover_in_progress": state_flag("is_failover_in_progress"),
+        "is_maintenance_in_progress": state_flag("is_maintenance_in_progress"),
+        "is_creation_in_progress": state_flag("is_creation_in_progress"),
+        "is_removal_in_progress": state_flag("is_removal_in_progress"),
+        "is_secondary_reinit_in_progress": state_flag("is_secondary_reinit_in_progress"),
+        "is_first_launch_after_failover": state_flag("is_first_launch_after_failover"),
+        "is_endpoint_migration_in_progress": state_flag(
+            "is_cluster_endpoint_migration_in_progress"
+        ),
+        "last_online_time": _parse_ha_cluster_last_online(
+            getattr(states, "last_online_time_utc", None) if states else None
+        ),
+        "primary": _parse_ha_cluster_node(
+            getattr(cluster, "primary_node", None), get_enum_value, get_uuid_value
+        ),
+        "secondary": _parse_ha_cluster_node(
+            getattr(cluster, "secondary_node", None), get_enum_value, get_uuid_value
+        ),
+    }
+
+    # Anything Veeam adds later still reaches the diagnostics download
+    for key, value in getattr(cluster, "additional_properties", {}).items():
+        parsed.setdefault(key, serialize_value(value))
+
+    return parsed
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -101,6 +194,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Pre-import API endpoint modules to avoid blocking calls in event loop
     # The veeam_br library dynamically imports these modules during API calls
+    # High Availability arrived in 1.3-rev2; on older versions the endpoints are not in the
+    # SDK at all, so skip the call rather than fail it on every poll
+    ha_cluster_supported = check_api_feature_availability(api_version, HA_CLUSTER_FEATURE)
+    _LOGGER.debug("HA cluster endpoints available on %s: %s", api_version, ha_cluster_supported)
+
     api_endpoints = [
         "jobs.get_all_jobs_states",
         "service.get_server_info",
@@ -109,6 +207,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "repositories.get_all_repositories_states",
         "repositories.get_all_scale_out_repositories",
     ]
+    if ha_cluster_supported:
+        api_endpoints.append("high_availability_ha_cluster.get_high_availability_cluster")
     for endpoint in api_endpoints:
         try:
             await asyncio.to_thread(
@@ -572,6 +672,37 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             _LOGGER.debug("Total SOBRs added to coordinator data: %d", len(sobr_list))
 
+            # Fetch High Availability cluster configuration and state. Only reachable on
+            # 1.3-rev2 and newer, and only answered by a server that is actually clustered —
+            # an unclustered server is the common case, not an error.
+            ha_cluster = None
+            if ha_cluster_supported:
+                try:
+                    ha_api = await asyncio.to_thread(
+                        veeam_client.api, "high_availability_ha_cluster"
+                    )
+                    cluster = await veeam_client.call(ha_api.get_high_availability_cluster)
+
+                    if cluster is None or not hasattr(cluster, "cluster_endpoint"):
+                        # None, or an Error model: this server is not clustered
+                        _LOGGER.debug(
+                            "No HA cluster reported by this server (%s)",
+                            type(cluster).__name__,
+                        )
+                    else:
+                        ha_cluster = _parse_ha_cluster(
+                            cluster, get_enum_value, get_uuid_value, serialize_value
+                        )
+                        _LOGGER.debug(
+                            "Parsed HA cluster %s (online=%s)",
+                            ha_cluster.get("name"),
+                            ha_cluster.get("is_online"),
+                        )
+                except (AttributeError, KeyError, TypeError, ValueError) as err:
+                    _LOGGER.warning("Failed to parse HA cluster: %s", err)
+                except Exception as err:
+                    _LOGGER.warning("Failed to fetch HA cluster: %s", err)
+
             # Update diagnostic values - successful poll
             health_ok = True
             last_successful_poll = dt_util.now()
@@ -582,6 +713,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "license_info": license_info,
                 "repositories": repositories_list,
                 "sobrs": sobr_list,
+                "ha_cluster": ha_cluster,
                 "diagnostics": {
                     "connected": connected,
                     "health_ok": health_ok,
