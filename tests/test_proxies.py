@@ -15,6 +15,7 @@ COMPONENT = Path(__file__).parent.parent / "custom_components" / "veeam_br"
 INIT_PATH = COMPONENT / "__init__.py"
 SENSOR_PATH = COMPONENT / "sensor.py"
 BUTTON_PATH = COMPONENT / "button.py"
+BINARY_PATH = COMPONENT / "binary_sensor.py"
 
 
 def _load_display():
@@ -97,15 +98,16 @@ def test_both_kinds_reach_the_coordinator_payload():
 def test_entities_are_gated_on_the_endpoint_existing():
     """Neither endpoint is present in every API revision the library ships."""
     sensor_source = SENSOR_PATH.read_text(encoding="utf-8")
+    binary_source = BINARY_PATH.read_text(encoding="utf-8")
 
-    assert 'check_api_feature_availability(api_version, "api.proxies")' in sensor_source
+    assert 'check_api_feature_availability(api_version, "api.proxies")' in binary_source
     assert 'check_api_feature_availability(api_version, "api.wan_accelerators")' in sensor_source
 
 
 def test_proxy_enabled_is_reported_the_healthy_way_round():
     """The API reports isDisabled; a sensor called "Disabled" would show red when fine."""
-    sensor_source = SENSOR_PATH.read_text(encoding="utf-8")
-    block = sensor_source[sensor_source.index("class VeeamProxyEnabledSensor") :]
+    binary_source = BINARY_PATH.read_text(encoding="utf-8")
+    block = binary_source[binary_source.index("class VeeamProxyEnabledSensor") :]
     block = block[: block.index("class VeeamProxyOutOfDate")]
 
     assert 'self._attr_name = "Enabled"' in block
@@ -131,15 +133,17 @@ def test_proxy_buttons_are_config_entities():
 
 
 def test_proxy_entities_share_one_device_per_proxy():
-    """Sensors and buttons must agree on the identifier or they split into two devices."""
-    sensor_source = SENSOR_PATH.read_text(encoding="utf-8")
-    button_source = BUTTON_PATH.read_text(encoding="utf-8")
+    """Every platform must agree on the identifier or they split into separate devices."""
+    sources = [
+        SENSOR_PATH.read_text(encoding="utf-8"),
+        BUTTON_PATH.read_text(encoding="utf-8"),
+    ]
 
     identifier = 'f"proxy_{self._proxy_id}"'
-    assert identifier in sensor_source
-    assert identifier in button_source
+    for source in sources:
+        assert identifier in source
 
-    for source in (sensor_source, button_source):
+    for source in sources:
         block = source[source.index(identifier) - 400 : source.index(identifier) + 400]
         assert '"model": "Backup Proxy"' in block
 

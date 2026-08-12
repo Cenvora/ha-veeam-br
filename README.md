@@ -438,6 +438,19 @@ no credentials.
 
 ## Entity States
 
+### Binary sensors
+
+Online, enabled, out-of-date and similar yes/no readings are `binary_sensor` entities with a
+device class, so Home Assistant renders them in words — *Connected* / *Disconnected*,
+*OK* / *Problem*, *Running* / *Not running* — rather than as `on` / `off`.
+
+> [!IMPORTANT]
+> Before 0.6.0 these were created as `sensor.*` entities and displayed as raw `on`/`off`. On
+> upgrade each one is replaced by its `binary_sensor.*` equivalent and the old entity is removed.
+> Automations, dashboards and templates referring to the old `sensor.` entity IDs need updating —
+> the entity name is unchanged, only the domain moved. Each replacement is logged.
+
+
 Values that the REST API reports as identifiers are shown as readable labels:
 `EnterprisePlus` becomes *Enterprise Plus*, `ProxmoxBackupJob` becomes *Proxmox Backup Job*,
 `WinLocal` becomes *Windows (local)*, and `inactive` becomes *Inactive*. Job status is lower
@@ -503,7 +516,8 @@ The integration monitors the following Veeam objects:
 ### Supported Entities
 
 - **Sensors**: Status, type, timestamps, capacity, statistics
-- **Binary Sensors**: Online/offline, connectivity, update available
+- **Binary Sensors**: Online/offline, connectivity, update available, immutability, capacity
+  warnings, proxy state (in the `binary_sensor` domain, so they read as words)
 - **Buttons**: Repository rescan, extent maintenance/sealed mode, start/stop/enable/disable job
 
 ### Unsupported (Future Enhancements)
