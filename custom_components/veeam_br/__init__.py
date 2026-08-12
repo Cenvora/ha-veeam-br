@@ -26,6 +26,7 @@ from .const import (
     UPDATE_INTERVAL,
     check_api_feature_availability,
 )
+from .display import humanize
 from .licensing import describe_license, unsupported_license_reason
 from .sdk_patches import patch_models as patch_null_values_in_models
 
@@ -59,8 +60,10 @@ def _parse_ha_cluster_node(node, get_enum_value, get_uuid_value) -> dict | None:
         "name": getattr(node, "name", None) or "Unknown",
         "ip_address": getattr(node, "ip_address", None) or None,
         "fqdn": getattr(node, "fqdn", None) or None,
-        "role": get_enum_value(getattr(node, "role", None)),
-        "state": get_enum_value(getattr(node, "state", None)),
+        "role": humanize(get_enum_value(getattr(node, "role", None)), "Unknown"),
+        "role_raw": get_enum_value(getattr(node, "role", None)),
+        "state": humanize(get_enum_value(getattr(node, "state", None)), "Unknown"),
+        "state_raw": get_enum_value(getattr(node, "state", None)),
         "timeline": getattr(node, "timeline", None) or None,
         "lag_mb": lag_mb if isinstance(lag_mb, (int, float)) else None,
         "external_endpoint": external_endpoint,
@@ -451,9 +454,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             job_dict = {
                                 "id": job_id,
                                 "name": job.name or "Unknown",
-                                "type": get_enum_value(job.type_),
-                                "status": get_enum_value(job.status),
-                                "last_result": get_enum_value(job.last_result),
+                                "type": humanize(get_enum_value(job.type_), "Unknown"),
+                                "type_raw": get_enum_value(job.type_),
+                                "status": humanize(get_enum_value(job.status), "Unknown"),
+                                "status_raw": get_enum_value(job.status),
+                                "last_result": humanize(get_enum_value(job.last_result), "Unknown"),
+                                "last_result_raw": get_enum_value(job.last_result),
                                 "last_run": get_datetime_value(job.last_run),
                                 "next_run": get_datetime_value(job.next_run),
                             }
@@ -533,11 +539,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         return str(attr)
 
                     license_info = {
-                        "status": get_license_enum_attr(license_data, "status"),
-                        "edition": get_license_enum_attr(license_data, "edition"),
-                        "type": get_license_enum_attr(
-                            license_data, "type_"
-                        ),  # Note: type_ with underscore
+                        "status": humanize(
+                            get_license_enum_attr(license_data, "status"), "Unknown"
+                        ),
+                        "status_raw": get_license_enum_attr(license_data, "status"),
+                        "edition": humanize(
+                            get_license_enum_attr(license_data, "edition"), "Unknown"
+                        ),
+                        "edition_raw": get_license_enum_attr(license_data, "edition"),
+                        # Note: type_ with underscore
+                        "type": humanize(get_license_enum_attr(license_data, "type_"), "Unknown"),
+                        "type_raw": get_license_enum_attr(license_data, "type_"),
                         "expiration_date": _license_datetime(license_data, "expiration_date"),
                         "support_expiration_date": _license_datetime(
                             license_data, "support_expiration_date"
@@ -630,7 +642,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                                 "id": get_uuid_value(repo.id),
                                 "name": repo.name or "Unknown",
                                 "description": repo.description or "",
-                                "type": get_enum_value(repo.type_),
+                                "type": humanize(get_enum_value(repo.type_), "Unknown"),
+                                "type_raw": get_enum_value(repo.type_),
                                 "unique_id": (
                                     repo.unique_id if repo.unique_id is not UNSET else None
                                 ),

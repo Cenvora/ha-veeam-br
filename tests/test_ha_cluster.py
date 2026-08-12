@@ -8,6 +8,7 @@ installed, which this repo's test environment does not have.
 
 import ast
 from datetime import datetime, timezone
+import importlib.util
 from pathlib import Path
 import re
 
@@ -43,9 +44,17 @@ def helpers_fixture():
     ]
     assert len(wanted) == len(HELPERS), f"expected {HELPERS} in __init__.py, found {wanted}"
 
+    # display.py is Home Assistant free, so the real humanize() is used rather than a stub —
+    # the parsed labels are what the sensors actually receive
+    display_path = INIT_PATH.parent / "display.py"
+    display_spec = importlib.util.spec_from_file_location("veeam_br_display", display_path)
+    display = importlib.util.module_from_spec(display_spec)
+    display_spec.loader.exec_module(display)
+
     namespace = {
         "dt_util": type("dt_util", (), {"parse_datetime": staticmethod(_parse_datetime)}),
         "timezone": timezone,
+        "humanize": display.humanize,
     }
     exec(compile(ast.Module(body=wanted, type_ignores=[]), str(INIT_PATH), "exec"), namespace)
     return namespace
@@ -134,8 +143,12 @@ def test_parses_a_healthy_cluster(helpers):
     assert parsed["cluster_dns_name"] == "vbr-ha.example.com"
     assert parsed["is_online"] is True
     assert parsed["is_failover_in_progress"] is False
+    # Roles are labels now, with the API value kept alongside for exact matching
     assert parsed["primary"]["role"] == "Leader"
-    assert parsed["secondary"]["role"] == "SyncStandby"
+    assert parsed["primary"]["role_raw"] == "Leader"
+    assert parsed["secondary"]["role"] == "Sync standby"
+    assert parsed["secondary"]["role_raw"] == "SyncStandby"
+    assert parsed["secondary"]["state"] == "Streaming"
     assert parsed["secondary"]["lag_mb"] == 12
 
 

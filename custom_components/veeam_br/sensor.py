@@ -443,6 +443,12 @@ class VeeamJobStatusSensor(VeeamJobBaseSensor):
             return "mdi:close-circle"
         return "mdi:cloud-sync"
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The unprettified API value, for automations that match exactly."""
+        data = self._job()
+        return {"raw_value": data.get("status_raw") if data else None}
+
 
 class VeeamJobTypeSensor(VeeamJobBaseSensor):
     """Sensor for Veeam Job Type."""
@@ -461,6 +467,12 @@ class VeeamJobTypeSensor(VeeamJobBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:file-tree"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The unprettified API value, for automations that match exactly."""
+        data = self._job()
+        return {"raw_value": data.get("type_raw") if data else None}
 
 
 class VeeamJobLastRunSensor(VeeamJobBaseSensor):
@@ -529,10 +541,15 @@ class VeeamJobLastResultSensor(VeeamJobBaseSensor):
             return "mdi:close-circle"
         return "mdi:help-circle"
 
+    # ===========================
+    # SERVER INFO SENSORS (single device)
+    # ===========================
 
-# ===========================
-# SERVER INFO SENSORS (single device)
-# ===========================
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The unprettified API value, for automations that match exactly."""
+        data = self._job()
+        return {"raw_value": data.get("last_result_raw") if data else None}
 
 
 class VeeamServerBaseSensor(CoordinatorEntity, SensorEntity):
@@ -806,6 +823,12 @@ class VeeamLicenseStatusSensor(VeeamLicenseBaseSensor):
             return "mdi:license-off"
         return "mdi:license"
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The unprettified API value, for automations that match exactly."""
+        data = self._license_info()
+        return {"raw_value": data.get("status_raw") if data else None}
+
 
 class VeeamLicenseEditionSensor(VeeamLicenseBaseSensor):
     """Sensor for Veeam License Edition."""
@@ -825,6 +848,12 @@ class VeeamLicenseEditionSensor(VeeamLicenseBaseSensor):
     def icon(self) -> str:
         return "mdi:certificate"
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The unprettified API value, for automations that match exactly."""
+        data = self._license_info()
+        return {"raw_value": data.get("edition_raw") if data else None}
+
 
 class VeeamLicenseTypeSensor(VeeamLicenseBaseSensor):
     """Sensor for Veeam License Type."""
@@ -843,6 +872,12 @@ class VeeamLicenseTypeSensor(VeeamLicenseBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:file-document"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The unprettified API value, for automations that match exactly."""
+        data = self._license_info()
+        return {"raw_value": data.get("type_raw") if data else None}
 
 
 class VeeamLicenseExpirationSensor(VeeamLicenseBaseSensor):
@@ -1029,6 +1064,12 @@ class VeeamRepositoryTypeSensor(VeeamRepositoryBaseSensor):
         if "scale" in repo_type or "sobr" in repo_type:
             return "mdi:server-plus"
         return "mdi:database"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The unprettified API value, for automations that match exactly."""
+        data = self._repository()
+        return {"raw_value": data.get("type_raw") if data else None}
 
 
 class VeeamRepositoryDescriptionSensor(VeeamRepositoryBaseSensor):
