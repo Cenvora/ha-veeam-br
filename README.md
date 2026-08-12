@@ -21,6 +21,7 @@ This project is an independent, open source project. It is not affiliated with, 
 - 🔄 **Automatic Updates**: Polls the Veeam server every 60 seconds
 - 🎨 **Dynamic Icons**: Visual indicators based on job status (success, running, failed, warning)
 - 📱 **Rich Attributes**: Detailed information including last run, next run, and job type
+- 🔀 **High Availability**: Monitor a clustered server and automate switchover or failover
 
 ## Requirements
 
@@ -154,6 +155,64 @@ The integration also creates devices for:
 - **Scale-Out Backup Repositories (SOBRs)**: Each SOBR device has sensors for description, extent count, and buttons for each extent to enable/disable sealed mode and maintenance mode.
 - **Server**: Server device has sensors for build version, platform, database info, etc.
 - **License**: License device has sensors for status, edition, expiration dates, etc.
+- **High Availability Cluster**: on a clustered Veeam B&R 13.1 server (API `1.3-rev2`), a
+  cluster device with online and failover-in-progress sensors, cluster endpoint and last-online
+  diagnostics, per-node replication state, Patroni role and replication lag, plus switchover
+  and failover buttons. See [High Availability](#high-availability) below.
+
+## High Availability
+
+Veeam B&R 13.1 exposes its High Availability cluster over the REST API. Select the
+`1.3-rev2` API version and, if the server is clustered, a **High Availability Cluster**
+device appears. Servers that are not clustered get no cluster device and no extra polling.
+
+### Entities
+
+| Entity | Notes |
+| ------ | ----- |
+| Online | Connectivity of the cluster as a whole |
+| Failover In Progress | Use this to gate automations, not just to observe |
+| Maintenance In Progress | Diagnostic |
+| Last Online | Diagnostic timestamp |
+| Cluster Endpoint | Diagnostic; DNS name, cross-subnet mode and endpoint migration as attributes |
+| Primary / Secondary Node State | Patroni state, e.g. `Running`, `Streaming`, `Crashed` |
+| Primary / Secondary Node Role | `Leader`, `Replica`, `StandbyLeader`, `SyncStandby` |
+| Primary / Secondary Node Lag | Replication lag in MB |
+
+### Switchover vs failover
+
+- **Switchover** is the planned, graceful role swap. It is the operation to automate, and it
+  keeps Veeam's replication-lag check in force, so the server refuses to promote a badly
+  lagging secondary.
+- **Failover** promotes the secondary without waiting for the primary. It is for when the
+  primary is already gone.
+
+Home Assistant buttons fire immediately with no confirmation step, so the **Failover** entity
+is **disabled by default** — enable it deliberately if you intend to automate it. Both buttons
+report unavailable while a failover or endpoint migration is already running.
+
+> [!WARNING]
+> Both operations move the active role of your backup infrastructure. Treat these buttons as
+> you would a power switch on the server itself, and prefer triggering switchover from an
+> automation with its own conditions over exposing the button on a dashboard.
+
+### Example: alert on an unplanned failover
+
+```yaml
+automation:
+  - alias: "Veeam HA failover started"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.vbr_ha_example_com_failover_in_progress
+        to: "on"
+    action:
+      - service: notify.notify
+        data:
+          title: "Veeam HA failover in progress"
+          message: >
+            Secondary node lag was
+            {{ states('sensor.vbr_ha_example_com_secondary_node_lag') }} MB.
+```
 
 ## Example Automations
 
@@ -294,6 +353,8 @@ The integration monitors the following Veeam objects:
 - ✅ **Scale-Out Repositories** - SOBR and extents
 - ✅ **Server Information** - Veeam server details
 - ✅ **License Information** - License status and expiration
+- ✅ **High Availability Cluster** - cluster state, node roles and replication lag, with
+  switchover and failover actions (Veeam B&R 13.1 and the `1.3-rev2` API version)
 
 ### Supported Entities
 

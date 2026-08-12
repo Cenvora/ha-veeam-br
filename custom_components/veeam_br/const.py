@@ -138,4 +138,8 @@ API_FEATURE_REQUIREMENTS = {
     "sobr_data": "api.repositories",  # SOBRs use repositories API
     "license_data": "api.license_",
     "server_data": "api.service",
+    # High Availability cluster: API 1.3-rev2 (VBR 13.1) and newer only
+    "ha_cluster_data": "api.high_availability_ha_cluster",
+    "ha_cluster_switchover_button": "models.high_availability_switchover_spec",
+    "ha_cluster_failover_button": "api.high_availability_ha_cluster",
 }
