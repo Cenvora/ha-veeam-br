@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import logging
+import sys
 from typing import Any
 
 from homeassistant import config_entries
@@ -16,11 +18,13 @@ from .const import (
     API_VERSIONS,
     CONF_API_VERSION,
     CONF_VERIFY_SSL,
+    DEFAULT_API_MODULE,
     DEFAULT_API_VERSION,
     DEFAULT_PORT,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
 )
+from .sdk_patches import patch_models as patch_null_values_in_models
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,12 +48,41 @@ def _get_api_version_selector_config(
     return [DEFAULT_API_VERSION], DEFAULT_API_VERSION
 
 
+def _load_veeam_br(api_version: str):
+    """Import veeam_br and everything connect() imports dynamically, then patch models.
+
+    VeeamClient.connect() resolves the versioned SDK with importlib at call time. Left to
+    itself that lands on the event loop, which Home Assistant reports as a blocking call,
+    so every module it needs is imported here instead — this runs in an executor. Importing
+    a model imports the whole models package, so patching it costs nothing extra.
+    """
+    from veeam_br.client import VeeamClient
+
+    api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
+    package = f"veeam_br.{api_module}"
+
+    for module in (
+        f"{package}.client",
+        f"{package}.api.login.create_token",
+        f"{package}.models.token_login_spec",
+        f"{package}.models.e_login_grant_type",
+    ):
+        importlib.import_module(module)
+
+    models_package = f"{package}.models"
+    patch_null_values_in_models(
+        models_package, importlib.import_module(f"{package}.types").UNSET, sys.modules
+    )
+
+    return VeeamClient
+
+
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect."""
     api_version = data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
 
     try:
-        from veeam_br.client import VeeamClient
+        VeeamClient = await hass.async_add_executor_job(_load_veeam_br, api_version)
     except ImportError as err:
         _LOGGER.error("Error importing veeam_br: %s", err)
         raise ConnectionError("Failed to import veeam_br modules") from err

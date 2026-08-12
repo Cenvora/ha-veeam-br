@@ -495,12 +495,12 @@ def test_api_v1_2_rev1_sobr_extent_status():
     )
 
 
-def test_null_timestamp_patch_is_applied_before_any_request():
-    """Test that the null-timestamp patch is applied during setup (issue #83).
+def test_null_value_patch_is_applied_before_any_request():
+    """Test that the null-tolerance patch is applied during setup (issues #82, #83).
 
-    VBR sends nextRun=null for an unscheduled job, which makes the generated model reject
-    the whole jobs response. The patch must land before the first API call, or the first
-    refresh still loses every job. (The patch itself is tested in test_sdk_patches.py.)
+    VBR sends nulls where the schema promises values, which makes the generated models
+    reject the whole response. The patch must land before the first API call, or the first
+    refresh still loses the data. (The patch itself is tested in test_sdk_patches.py.)
     """
     from pathlib import Path
 
@@ -513,7 +513,7 @@ def test_null_timestamp_patch_is_applied_before_any_request():
         "from .sdk_patches import" in content
     ), "__init__.py should apply the model patches from sdk_patches"
 
-    patch_call = content.index("patch_null_timestamp_models(")
+    patch_call = content.index("patch_null_values_in_models(")
     connect_call = content.index("await veeam_client.connect()")
     assert patch_call < connect_call, (
         "models must be patched before the client connects, so no response is parsed by "
@@ -524,6 +524,64 @@ def test_null_timestamp_patch_is_applied_before_any_request():
     assert (
         "await asyncio.to_thread(patch_models)" in content
     ), "model patching does blocking imports and should run via asyncio.to_thread"
+
+
+def test_config_flow_does_not_import_on_the_event_loop():
+    """Test that the config flow pre-imports the SDK off the loop (issue #82).
+
+    VeeamClient.connect() resolves the versioned SDK with importlib at call time, which
+    Home Assistant reports as a blocking call when awaited directly from the flow.
+    """
+    from pathlib import Path
+
+    config_flow_path = (
+        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "config_flow.py"
+    )
+
+    with open(config_flow_path) as f:
+        content = f.read()
+
+    assert (
+        "async_add_executor_job(_load_veeam_br" in content
+    ), "veeam_br should be imported in an executor, not on the event loop"
+
+    # Everything connect() imports dynamically must be pre-imported there
+    loader = content[
+        content.index("def _load_veeam_br") : content.index("async def validate_input")
+    ]
+    for module in ("client", "api.login.create_token", "models.token_login_spec"):
+        assert module in loader, f"_load_veeam_br should pre-import {module}"
+
+    # The plain import must not sit in the coroutine any more
+    validate = content[content.index("async def validate_input") :]
+    validate = validate[: validate.index("\nclass ")]
+    assert (
+        "from veeam_br.client import VeeamClient" not in validate
+    ), "importing veeam_br inside validate_input puts a blocking import on the loop"
+
+
+def test_devices_are_distinguishable_across_servers():
+    """Test that device names identify their server (issue #82).
+
+    With two entries configured, a hardcoded or "Unknown" device name appears twice and
+    the user cannot tell the servers apart.
+    """
+    from pathlib import Path
+
+    sensor_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "sensor.py"
+
+    with open(sensor_path) as f:
+        content = f.read()
+
+    assert (
+        '"name": "Veeam License"' not in content
+    ), "the license device name must be qualified per entry, not hardcoded"
+    assert (
+        'server_info.get("name", "Unknown") if server_info else "Unknown"' not in content
+    ), "the server device should fall back to the configured host, not a shared 'Unknown'"
+    assert (
+        content.count("Veeam License (") == 1
+    ), "the license device name should include the configured host"
 
 
 def _load_const():

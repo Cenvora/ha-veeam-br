@@ -6,6 +6,7 @@ import asyncio
 from datetime import timedelta
 import importlib
 import logging
+import sys
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
@@ -23,7 +24,7 @@ from .const import (
     DOMAIN,
     UPDATE_INTERVAL,
 )
-from .sdk_patches import patch_models as patch_null_timestamp_models
+from .sdk_patches import patch_models as patch_null_values_in_models
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -49,22 +50,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to import veeam_br types: %s", err)
         return False
 
-    # Teach the generated models to tolerate null timestamps before anything parses a
-    # response, or one unscheduled job hides every job (issue #83). Imports are blocking,
-    # so patching runs off the event loop.
+    # Teach the generated models to tolerate nulls where Veeam's schema promises a value,
+    # before anything parses a response. Without this a single null timestamp, UUID or
+    # nested object empties a whole endpoint (issues #82 and #83). Importing the models
+    # package blocks, so this runs off the event loop.
     def patch_models() -> int:
-        return patch_null_timestamp_models(
-            lambda name: importlib.import_module(f"veeam_br.{api_module}.models.{name}"),
-            UNSET,
-        )
+        models_package = f"veeam_br.{api_module}.models"
+        importlib.import_module(models_package)  # imports every model module eagerly
+        return patch_null_values_in_models(models_package, UNSET, sys.modules)
 
     try:
         patched = await asyncio.to_thread(patch_models)
-        _LOGGER.debug("Patched %d model modules to tolerate null timestamps", patched)
+        _LOGGER.debug("Patched %d model modules to tolerate null values", patched)
     except Exception as err:  # noqa: BLE001 - never block setup over a resilience patch
         _LOGGER.warning(
-            "Could not patch veeam_br models for null timestamps (%s); jobs with no "
-            "schedule or no previous run may fail to load. See "
+            "Could not patch veeam_br models for null values (%s); jobs, repositories or "
+            "license data may fail to load. See "
             "https://github.com/Cenvora/ha-veeam-br/issues/83",
             err,
         )
@@ -147,6 +148,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     return None
                 return dt_val
 
+            # Helper to safely get UUID as string
+            def get_uuid_value(uuid_val):
+                """Extract UUID value."""
+                if uuid_val is None or uuid_val is UNSET:
+                    return None
+                return str(uuid_val)
+
             # Fetch jobs data — wrapped in try/except so a parsing failure (e.g.
             # an API-version mismatch in the veeam_br library causing a ValueError
             # from dict()) degrades gracefully rather than aborting the whole setup.
@@ -166,8 +174,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     for job in jobs_data:
                         try:
+                            # A null id parses as UNSET (see sdk_patches); entity unique
+                            # IDs are built from it, so skip rather than emit "None" ones
+                            job_id = get_uuid_value(job.id)
+                            if not job_id:
+                                _LOGGER.warning(
+                                    "Skipping job %s: no usable ID",
+                                    getattr(job, "name", "Unknown"),
+                                )
+                                continue
+
                             job_dict = {
-                                "id": str(job.id),
+                                "id": job_id,
                                 "name": job.name or "Unknown",
                                 "type": get_enum_value(job.type_),
                                 "status": get_enum_value(job.status),
@@ -289,13 +307,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Fetch repositories information
             repositories_list = []
             try:
-                # Helper to safely get UUID as string
-                def get_uuid_value(uuid_val):
-                    """Extract UUID value."""
-                    if uuid_val is None or uuid_val is UNSET:
-                        return None
-                    return str(uuid_val)
-
                 # Helper to serialize nested objects to dict
                 def serialize_value(value):
                     """Recursively serialize values to JSON-compatible types."""
@@ -355,6 +366,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     for repo in repositories_data:
                         try:
+                            # See the job loop: entity unique IDs need a usable ID
+                            if not get_uuid_value(repo.id):
+                                _LOGGER.warning(
+                                    "Skipping repository %s: no usable ID",
+                                    getattr(repo, "name", "Unknown"),
+                                )
+                                continue
+
                             repo_dict = {
                                 "id": get_uuid_value(repo.id),
                                 "name": repo.name or "Unknown",
@@ -479,6 +498,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     for sobr in sobr_data:
                         try:
+                            # See the job loop: entity unique IDs need a usable ID
+                            if not get_uuid_value(sobr.id):
+                                _LOGGER.warning(
+                                    "Skipping scale-out repository %s: no usable ID",
+                                    getattr(sobr, "name", "Unknown"),
+                                )
+                                continue
+
                             sobr_dict = {
                                 "id": get_uuid_value(sobr.id),
                                 "name": sobr.name or "Unknown",

@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import CONF_HOST, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -299,7 +299,9 @@ class VeeamLicenseMixin:
         """Return device info for the Veeam license."""
         return {
             "identifiers": {(DOMAIN, f"license_{self._config_entry.entry_id}")},
-            "name": "Veeam License",
+            # Qualified by host: a hardcoded name is indistinguishable once a second
+            # server is added (issue #82)
+            "name": f"Veeam License ({self._config_entry.data.get(CONF_HOST, 'Unknown')})",
             "manufacturer": "Veeam",
             "model": "License",
         }
@@ -509,7 +511,10 @@ class VeeamServerBaseSensor(CoordinatorEntity, SensorEntity):
     def device_info(self):
         """Return device info for the Veeam server."""
         server_info = self._server_info()
-        server_name = server_info.get("name", "Unknown") if server_info else "Unknown"
+        # Fall back to the configured host rather than a bare "Unknown": when server info
+        # fails to fetch, every entry's device would otherwise carry the same name (#82)
+        host = self._config_entry.data.get(CONF_HOST, "Unknown")
+        server_name = (server_info.get("name") if server_info else None) or host
         return {
             "identifiers": {(DOMAIN, f"server_{self._config_entry.entry_id}")},
             "name": f"{server_name}",
@@ -670,7 +675,10 @@ class VeeamServerBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
     def device_info(self):
         """Return device info for the Veeam server."""
         server_info = self._server_info()
-        server_name = server_info.get("name", "Unknown") if server_info else "Unknown"
+        # Fall back to the configured host rather than a bare "Unknown": when server info
+        # fails to fetch, every entry's device would otherwise carry the same name (#82)
+        host = self._config_entry.data.get(CONF_HOST, "Unknown")
+        server_name = (server_info.get("name") if server_info else None) or host
         return {
             "identifiers": {(DOMAIN, f"server_{self._config_entry.entry_id}")},
             "name": f"{server_name}",
