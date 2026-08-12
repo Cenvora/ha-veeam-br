@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_API_VERSION,
     DOMAIN,
     check_api_feature_availability,
+    configured_api_version,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,10 +42,7 @@ async def async_setup_entry(
 
     # Pre-import API endpoint modules to avoid blocking calls in event loop
     # Get the configured API version for proper module path
-    api_version = entry.options.get(
-        CONF_API_VERSION,
-        entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-    )
+    api_version = configured_api_version(entry)
     api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
     # Pre-import button API endpoints
@@ -81,10 +79,7 @@ async def async_setup_entry(
             return
 
         # Get the configured API version
-        api_version = entry.options.get(
-            CONF_API_VERSION,
-            entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-        )
+        api_version = configured_api_version(entry)
 
         new_entities = []
 
@@ -329,10 +324,7 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
         """
         try:
             # Get the API version
-            api_version = self._config_entry.options.get(
-                CONF_API_VERSION,
-                self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-            )
+            api_version = configured_api_version(self._config_entry)
             api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
             # VeeamClient handles token refresh automatically - no manual check needed
@@ -428,10 +420,7 @@ class VeeamSOBRExtentEnableSealedModeButton(VeeamSOBRExtentButtonBase):
         """Handle the button press to enable sealed mode for the extent."""
         try:
             # Get the API version
-            api_version = self._config_entry.options.get(
-                CONF_API_VERSION,
-                self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-            )
+            api_version = configured_api_version(self._config_entry)
             api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
             # Import the body model for the request
@@ -503,10 +492,7 @@ class VeeamSOBRExtentDisableSealedModeButton(VeeamSOBRExtentButtonBase):
         """Handle the button press to disable sealed mode for the extent."""
         try:
             # Get the API version
-            api_version = self._config_entry.options.get(
-                CONF_API_VERSION,
-                self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-            )
+            api_version = configured_api_version(self._config_entry)
             api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
             # Import the body model for the request
@@ -578,10 +564,7 @@ class VeeamSOBRExtentEnableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
         """Handle the button press to enable maintenance mode for the extent."""
         try:
             # Get the API version
-            api_version = self._config_entry.options.get(
-                CONF_API_VERSION,
-                self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-            )
+            api_version = configured_api_version(self._config_entry)
             api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
             # Import the body model for the request
@@ -654,10 +637,7 @@ class VeeamSOBRExtentDisableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
         """Handle the button press to disable maintenance mode for the extent."""
         try:
             # Get the API version
-            api_version = self._config_entry.options.get(
-                CONF_API_VERSION,
-                self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-            )
+            api_version = configured_api_version(self._config_entry)
             api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
             # Import the body model for the request
@@ -740,10 +720,7 @@ class VeeamJobButtonBase(CoordinatorEntity, ButtonEntity):
 
     def _get_api_module(self) -> str:
         """Get the API module name based on the configured API version."""
-        api_version = self._config_entry.options.get(
-            CONF_API_VERSION,
-            self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-        )
+        api_version = configured_api_version(self._config_entry)
         return API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
     async def _import_spec_model(self, spec_name: str):
@@ -1029,10 +1006,7 @@ class VeeamHAClusterButtonBase(CoordinatorEntity, ButtonEntity):
 
     def _api_module(self) -> str:
         """Resolve the SDK package for the configured API version."""
-        api_version = self._config_entry.options.get(
-            CONF_API_VERSION,
-            self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-        )
+        api_version = configured_api_version(self._config_entry)
         return API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
 

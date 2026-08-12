@@ -43,10 +43,16 @@ is that the caller chooses one. If the Swagger endpoints are unreachable or disa
 detection is skipped and the newest supported revision is used; select a revision manually if
 that is wrong for your server.
 
-The detected revision is **resolved once** and stored, when the entry is created or its
-options are changed. Upgrading VBR does not silently move an existing entry onto a newer
-revision — re-run **Configure** and choose *auto* again to pick up a newer one. Veeam also
-serves older revisions to newer servers, so a pinned lower revision stays a safe choice.
+*auto* is stored as a standing preference, not resolved away: it is re-evaluated on every
+startup and reload. Upgrading VBR, or updating `veeam-br` to a release that adds a newer
+revision, moves the entry onto the newer revision by itself — no reconfiguration needed. Pick a
+specific revision instead if you want it pinned.
+
+> [!NOTE]
+> A newer revision can rename enum values and add fields. That is the trade for automatic
+> upgrades: if a revision ever changes something this integration reads, *auto* will adopt it on
+> the next restart. Pin a version if you would rather adopt those changes deliberately. The
+> resolved revision is logged at startup and shown in the diagnostics download.
 
 | VBR Version | API Version | Notes |
 | ----------- | ----------- | ----- |

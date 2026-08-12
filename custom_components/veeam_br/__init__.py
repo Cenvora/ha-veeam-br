@@ -15,8 +15,10 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from .api_version import async_resolve_api_version
 from .const import (
     API_VERSIONS,
+    AUTO_API_VERSION,
     CONF_API_VERSION,
     CONF_VERIFY_SSL,
     DEFAULT_API_MODULE,
@@ -25,6 +27,7 @@ from .const import (
     DOMAIN,
     UPDATE_INTERVAL,
     check_api_feature_availability,
+    configured_api_version,
 )
 from .display import humanize
 from .licensing import describe_license, unsupported_license_reason
@@ -361,9 +364,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Veeam Backup & Replication from a config entry."""
     from veeam_br.client import VeeamClient
 
-    api_version = entry.options.get(
+    # "auto" is stored as the user's intent, not a version, so it is resolved on every setup
+    # — which means a restart picks up a server upgrade or a newer veeam-br automatically.
+    stored_version = entry.options.get(
         CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
     )
+    if stored_version == AUTO_API_VERSION:
+        api_version = await async_resolve_api_version(
+            {**entry.data, CONF_API_VERSION: AUTO_API_VERSION}
+        )
+        _LOGGER.info(
+            "API version is set to auto; using %s for %s", api_version, entry.data[CONF_HOST]
+        )
+    else:
+        api_version = stored_version
+
     api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
     # Import UNSET type for proper type checking
@@ -977,6 +992,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.runtime_data = {
         "coordinator": coordinator,
         "veeam_client": veeam_client,
+        # Platforms and entities read the resolved version from here rather than re-reading
+        # the entry, which may only hold "auto"
+        "api_version": api_version,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

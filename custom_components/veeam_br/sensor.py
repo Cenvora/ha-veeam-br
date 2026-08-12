@@ -14,7 +14,13 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CONF_API_VERSION, DEFAULT_API_VERSION, DOMAIN, check_api_feature_availability
+from .const import (
+    CONF_API_VERSION,
+    DEFAULT_API_VERSION,
+    DOMAIN,
+    check_api_feature_availability,
+    configured_api_version,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,10 +52,7 @@ async def async_setup_entry(
             return
 
         # Get the configured API version
-        api_version = entry.options.get(
-            CONF_API_VERSION,
-            entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
-        )
+        api_version = configured_api_version(entry)
 
         new_entities = []
 

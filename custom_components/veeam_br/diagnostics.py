@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_API_VERSION, DEFAULT_API_VERSION
+from .const import CONF_API_VERSION, DEFAULT_API_VERSION, configured_api_version
 from .licensing import unsupported_license_reason
 
 
@@ -40,10 +40,13 @@ async def async_get_config_entry_diagnostics(
             "domain": entry.domain,
             "title": entry.title,
             "unique_id": entry.unique_id,
-            # First questions in any bug report: which API revision, and which library
-            "api_version": entry.options.get(
+            # First questions in any bug report: which API revision, and which library.
+            # Both are reported because "auto" is a valid stored value, and knowing what it
+            # resolved to is the whole point.
+            "api_version_configured": entry.options.get(
                 CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
             ),
+            "api_version": configured_api_version(entry),
             "veeam_br_version": _veeam_br_version(),
         },
         "coordinator": {
