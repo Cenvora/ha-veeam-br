@@ -15,29 +15,46 @@ CONF_API_VERSION = "api_version"
 # Defaults
 DEFAULT_PORT = 9419
 DEFAULT_VERIFY_SSL = True
-DEFAULT_API_VERSION = "1.3-rev1"
+# Newest API revision shipped by veeam-br, served by Veeam B&R 13.1. Bump this together
+# with FALLBACK_API_VERSIONS when veeam-br adds a revision. Users on older servers can
+# select an older revision in the config flow; the flow validates the connection, so a
+# revision the server does not serve fails at setup rather than silently.
+DEFAULT_API_VERSION = "1.3-rev2"
 
 _LOGGER = logging.getLogger(__name__)
+
+# Fallback used when the veeam-br package cannot be inspected. Mirrors the
+# versions shipped by veeam-br >= 0.3.0 (see veeam_br.versions.VERSION_TO_PACKAGE);
+# 1.3-rev2 is the API version served by Veeam B&R 13.1.
+FALLBACK_API_VERSIONS = {
+    "1.2-rev1": "v1_2_rev1",
+    "1.3-rev0": "v1_3_rev0",
+    "1.3-rev1": "v1_3_rev1",
+    "1.3-rev2": "v1_3_rev2",
+}
+
+# Package directory backing DEFAULT_API_VERSION, used when a stored API version is unknown
+DEFAULT_API_MODULE = FALLBACK_API_VERSIONS[DEFAULT_API_VERSION]
+
+# Pattern to match version directories: v{major}_{minor}_rev{revision}
+_API_VERSION_PATTERN = re.compile(r"^v(\d+)_(\d+)_rev(\d+)$")
 
 
 def _discover_api_versions() -> dict[str, str]:
     """Dynamically discover available API versions from the veeam-br package.
 
     Returns:
-        dict: Mapping of display version (e.g., "1.2-rev1") to module name (e.g., "v1_2_rev1")
+        dict: Mapping of display version (e.g., "1.2-rev1") to module name (e.g., "v1_2_rev1"),
+            ordered oldest to newest.
     """
-    versions = {}
+    discovered: list[tuple[tuple[int, int, int], str, str]] = []
 
     try:
         # Find the veeam_br package
         spec = importlib.util.find_spec("veeam_br")
         if spec is None:
             _LOGGER.warning("veeam_br package not found, using default API versions")
-            return {
-                "1.2-rev1": "v1_2_rev1",
-                "1.3-rev0": "v1_3_rev0",
-                "1.3-rev1": "v1_3_rev1",
-            }
+            return dict(FALLBACK_API_VERSIONS)
 
         # Get the package directory (handle namespace packages)
         if spec.submodule_search_locations:
@@ -46,43 +63,29 @@ def _discover_api_versions() -> dict[str, str]:
             veeam_br_path = os.path.dirname(spec.origin)
         else:
             _LOGGER.warning("Could not determine veeam_br package path, using defaults")
-            return {
-                "1.2-rev1": "v1_2_rev1",
-                "1.3-rev0": "v1_3_rev0",
-                "1.3-rev1": "v1_3_rev1",
-            }
-
-        # Pattern to match version directories: v{major}_{minor}_rev{revision}
-        api_version_pattern = re.compile(r"^v(\d+)_(\d+)_rev(\d+)$")
+            return dict(FALLBACK_API_VERSIONS)
 
         # Scan for version directories
         for item in os.listdir(veeam_br_path):
-            item_path = os.path.join(veeam_br_path, item)
-            if os.path.isdir(item_path) and api_version_pattern.match(item):
-                match = api_version_pattern.match(item)
-                if match:
-                    major, minor, rev = match.groups()
-                    # Convert to display format: "1.2-rev1"
-                    display_version = f"{major}.{minor}-rev{rev}"
-                    versions[display_version] = item
+            match = _API_VERSION_PATTERN.match(item)
+            if match and os.path.isdir(os.path.join(veeam_br_path, item)):
+                major, minor, rev = match.groups()
+                # Convert to display format: "1.2-rev1"
+                display_version = f"{major}.{minor}-rev{rev}"
+                discovered.append(((int(major), int(minor), int(rev)), display_version, item))
 
-        if not versions:
+        if not discovered:
             _LOGGER.warning("No API versions found in veeam_br package, using defaults")
-            return {
-                "1.2-rev1": "v1_2_rev1",
-                "1.3-rev0": "v1_3_rev0",
-                "1.3-rev1": "v1_3_rev1",
-            }
+            return dict(FALLBACK_API_VERSIONS)
+
+        # Sort numerically so the selector order does not depend on filesystem ordering
+        versions = {display: module for _, display, module in sorted(discovered)}
 
         _LOGGER.debug("Discovered API versions: %s", list(versions.keys()))
 
     except Exception as err:
         _LOGGER.warning("Failed to discover API versions: %s, using defaults", err)
-        return {
-            "1.2-rev1": "v1_2_rev1",
-            "1.3-rev0": "v1_3_rev0",
-            "1.3-rev1": "v1_3_rev1",
-        }
+        return dict(FALLBACK_API_VERSIONS)
 
     return versions
 
@@ -104,7 +107,7 @@ def check_api_feature_availability(api_version: str, feature_path: str) -> bool:
     Returns:
         bool: True if the feature is available in the API version, False otherwise
     """
-    api_module = API_VERSIONS.get(api_version, "v1_3_rev1")
+    api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
     try:
         # Try to import the module/feature
