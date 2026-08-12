@@ -104,13 +104,17 @@ async def async_find_working_port(data: dict[str, Any], configured_port: int) ->
     connect" is now quite often the wrong port rather than a wrong host or a firewall. Worth
     one extra probe to be able to say which.
     """
-    from veeam_br.discovery import DEFAULT_PORTS, detect_rest_api
-
-    others = [port for port in DEFAULT_PORTS if port != configured_port]
-    if not others:
-        return None
-
     try:
+        # Guarded with the probe itself: this runs inside validate_input's failure handler,
+        # so an ImportError escaping here would replace the real connection error with
+        # "unknown". The manifest floors veeam-br at 0.5.0, but a hand-installed older copy
+        # should degrade to the generic error, not a misleading one.
+        from veeam_br.discovery import DEFAULT_PORTS, detect_rest_api
+
+        others = [port for port in DEFAULT_PORTS if port != configured_port]
+        if not others:
+            return None
+
         endpoint = await detect_rest_api(
             data[CONF_HOST],
             ports=others,

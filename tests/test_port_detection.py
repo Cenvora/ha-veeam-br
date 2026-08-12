@@ -116,6 +116,39 @@ def test_no_answer_gives_no_advice():
     assert asyncio.run(finder(data(), 443)) is None
 
 
+def test_an_older_library_degrades_to_the_generic_error():
+    """An ImportError escaping here would surface as "unknown" instead of the real error.
+
+    The manifest floors veeam-br at 0.5.0, but a hand-installed older copy has no
+    detect_rest_api, and the probe runs inside the connection-failure handler.
+    """
+    tree = ast.parse(CONFIG_FLOW_PATH.read_text(encoding="utf-8"))
+    func = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "async_find_working_port"
+    )
+
+    # A discovery module without the new names, exactly like veeam-br 0.4.0
+    sys.modules.setdefault("veeam_br", types.ModuleType("veeam_br"))
+    sys.modules["veeam_br.discovery"] = types.ModuleType("veeam_br.discovery")
+
+    namespace = {
+        "API_VERSIONS": SUPPORTED,
+        "CONF_HOST": "host",
+        "CONF_VERIFY_SSL": "verify_ssl",
+        "DEFAULT_VERIFY_SSL": True,
+        "_LOGGER": types.SimpleNamespace(debug=lambda *a, **k: None),
+        "Any": object,
+    }
+    exec(
+        compile(ast.Module(body=[func], type_ignores=[]), str(CONFIG_FLOW_PATH), "exec"),
+        namespace,
+    )
+
+    assert asyncio.run(namespace["async_find_working_port"](data(), 9419)) is None
+
+
 def test_a_failing_probe_is_not_fatal():
     """The probe is a nicety; it must not replace the real connection error."""
     finder = load_finder(raises=OSError("no route to host"))
