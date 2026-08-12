@@ -23,6 +23,7 @@ from .const import (
     DOMAIN,
     UPDATE_INTERVAL,
 )
+from .jobs_raw import JOBS_STATES_URL, jobs_from_payload
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,8 +96,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except ImportError as err:
             _LOGGER.debug("Could not pre-import %s: %s", endpoint, err)
 
+    # Set once the typed jobs call fails on a payload the veeam-br models cannot
+    # represent, so the tolerant path is used for the rest of the session instead of
+    # retrying a call known to fail on every poll. See jobs_raw and issue #83.
+    jobs_raw_fallback = False
+
+    async def async_fetch_jobs_tolerant() -> tuple[list[dict], int]:
+        """Fetch job states as raw JSON, bypassing the generated models."""
+        jobs_module = await asyncio.to_thread(
+            importlib.import_module, f"veeam_br.{api_module}.api.jobs.get_all_jobs_states"
+        )
+
+        async def request_jobs_states(*, client, x_api_version):
+            """Issue the same request the generated helper does, minus model parsing.
+
+            _get_kwargs is private to the generated module but is where the URL, query
+            params and version header live; falling back to the known URL keeps this
+            working if a future generator drops it.
+            """
+            get_kwargs = getattr(jobs_module, "_get_kwargs", None)
+            if get_kwargs is not None:
+                kwargs = get_kwargs(x_api_version=x_api_version)
+            else:
+                kwargs = {
+                    "method": "get",
+                    "url": JOBS_STATES_URL,
+                    "headers": {"x-api-version": x_api_version},
+                }
+
+            response = await client.get_async_httpx_client().request(**kwargs)
+            if response.is_success:
+                return response.json()
+
+            # Error bodies are often empty, so decoding one would only raise a confusing
+            # JSON error in place of the status that actually explains the failure.
+            _LOGGER.warning(
+                "Jobs API returned HTTP %s; job entities will be unavailable this cycle",
+                response.status_code,
+            )
+            return None
+
+        payload = await veeam_client.call(request_jobs_states)
+        return jobs_from_payload(payload, dt_util.parse_datetime)
+
     async def async_update_data():
         """Fetch data from API."""
+        nonlocal jobs_raw_fallback
+
         # Track connection state for diagnostic sensors
         connected = False
         health_ok = False
@@ -129,12 +175,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Fetch jobs data — wrapped in try/except so a parsing failure (e.g.
             # an API-version mismatch in the veeam_br library causing a ValueError
             # from dict()) degrades gracefully rather than aborting the whole setup.
+            # A payload the models cannot represent switches to jobs_raw instead of
+            # dropping every job.
             jobs_list = []
             try:
                 jobs_api = await asyncio.to_thread(veeam_client.api, "jobs")
-                jobs_response = await veeam_client.call(jobs_api.get_all_jobs_states)
 
-                if not jobs_response or not hasattr(jobs_response, "data"):
+                jobs_response = None
+                if not jobs_raw_fallback:
+                    try:
+                        jobs_response = await veeam_client.call(jobs_api.get_all_jobs_states)
+                    except (TypeError, ValueError) as err:
+                        # The models cannot represent every payload the server sends —
+                        # a null lastRun/nextRun fails the whole response, so one
+                        # unscheduled job would otherwise hide every job (issue #83).
+                        _LOGGER.warning(
+                            "The veeam-br models rejected the jobs response (%s); parsing "
+                            "job states directly for the rest of this session. See "
+                            "https://github.com/Cenvora/ha-veeam-br/issues/83",
+                            err,
+                        )
+                        jobs_raw_fallback = True
+
+                if jobs_raw_fallback:
+                    jobs_list, skipped = await async_fetch_jobs_tolerant()
+                    if skipped:
+                        _LOGGER.warning("Skipped %d unreadable job entries", skipped)
+                    _LOGGER.debug("Parsed %d jobs without the generated models", len(jobs_list))
+                elif not jobs_response or not hasattr(jobs_response, "data"):
                     _LOGGER.warning(
                         "Jobs API returned no data or an unexpected response object (%s); "
                         "job sensors will be unavailable",

@@ -495,6 +495,42 @@ def test_api_v1_2_rev1_sobr_extent_status():
     )
 
 
+def test_jobs_fall_back_to_tolerant_parsing():
+    """Test that a jobs payload the generated models reject falls back (issue #83).
+
+    VBR sends nextRun=null for an unscheduled job, which makes the generated model raise
+    TypeError for the whole response. The typed call must be guarded and the tolerant
+    path used instead, or every job entity disappears.
+    """
+    from pathlib import Path
+
+    init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
+
+    with open(init_path) as f:
+        content = f.read()
+
+    assert (
+        "from .jobs_raw import" in content
+    ), "__init__.py should use the tolerant parser from jobs_raw"
+
+    # The typed call must be individually guarded, not just covered by the outer handler,
+    # so failure can switch paths rather than yield zero jobs.
+    typed_call = content.index("veeam_client.call(jobs_api.get_all_jobs_states)")
+    guard = content.rindex("try:", 0, typed_call)
+    handler = content.index("except (TypeError, ValueError) as err:", typed_call)
+    assert guard < typed_call < handler, (
+        "the typed get_all_jobs_states call should sit in its own try/except catching "
+        "TypeError/ValueError so it can fall back to tolerant parsing"
+    )
+
+    assert (
+        "jobs_raw_fallback" in content
+    ), "the fallback decision should be remembered instead of retrying a failing call"
+    assert (
+        "nonlocal jobs_raw_fallback" in content
+    ), "the fallback flag must persist across coordinator refreshes"
+
+
 def _load_const():
     """Load const.py standalone.
 
