@@ -21,6 +21,8 @@ import pytest
 
 COMPONENT = Path(__file__).parent.parent / "custom_components" / "veeam_br"
 CONFIG_FLOW_PATH = COMPONENT / "config_flow.py"
+RESOLVER_PATH = COMPONENT / "api_version.py"
+INIT_PATH = COMPONENT / "__init__.py"
 CONST_PATH = COMPONENT / "const.py"
 
 AUTO = "auto"
@@ -35,7 +37,7 @@ DEFAULT = "1.3-rev2"
 
 def load_resolver(detected=None, raises=None, record=None):
     """Load async_resolve_api_version with veeam_br.discovery stubbed out."""
-    tree = ast.parse(CONFIG_FLOW_PATH.read_text(encoding="utf-8"))
+    tree = ast.parse(RESOLVER_PATH.read_text(encoding="utf-8"))
     func = next(
         node
         for node in tree.body
@@ -69,7 +71,7 @@ def load_resolver(detected=None, raises=None, record=None):
         "Any": object,
     }
     exec(
-        compile(ast.Module(body=[func], type_ignores=[]), str(CONFIG_FLOW_PATH), "exec"),
+        compile(ast.Module(body=[func], type_ignores=[]), str(RESOLVER_PATH), "exec"),
         namespace,
     )
     return namespace["async_resolve_api_version"]
@@ -150,19 +152,48 @@ def test_missing_api_version_is_treated_as_auto():
 # ---------------------------------------------------------------------------
 
 
-def test_sentinel_is_never_stored():
-    """The resolved version must reach the config entry, not the sentinel."""
-    content = CONFIG_FLOW_PATH.read_text(encoding="utf-8")
+def test_the_sentinel_is_stored_not_resolved_away():
+    """auto is a standing intent, so it has to survive being saved.
+
+    Resolving it at save time would freeze the entry on whichever revision was newest that
+    day, which defeats the point: a server upgrade or a newer veeam-br should move it on.
+    """
+    flow = CONFIG_FLOW_PATH.read_text(encoding="utf-8")
 
     assert (
-        "data[CONF_API_VERSION] = api_version" in content
-    ), "validate_input should write the resolved version back for the caller to store"
+        "data[CONF_API_VERSION] = api_version" not in flow
+    ), "validate_input must not write the resolved version back over the user's choice"
 
-    # The options flow builds its own dict to save, so it needs the resolved value too
-    options = content[content.index("class VeeamBROptionsFlow") :]
+    options = flow[flow.index("class VeeamBROptionsFlow") :]
     assert (
-        "CONF_API_VERSION: test_data[CONF_API_VERSION]" in options
-    ), "the options flow must persist the resolved version, not the submitted sentinel"
+        'async_create_entry(title="", data=user_input)' in options
+    ), "the options flow should store what was chosen, including auto"
+
+
+def test_setup_resolves_the_sentinel_on_every_start():
+    """That is what makes a stored auto keep up with the server and the library."""
+    init = INIT_PATH.read_text(encoding="utf-8")
+
+    assert "stored_version == AUTO_API_VERSION" in init
+    assert "await async_resolve_api_version(" in init
+
+    # The answer has to reach the platforms, which cannot re-detect for themselves
+    assert '"api_version": api_version' in init
+
+
+def test_readers_go_through_one_resolver():
+    """A reader seeing the raw "auto" would fall back to the default and silently disagree
+    with the version the coordinator is actually using."""
+    direct_read = "entry.options.get("
+
+    for name in ("button.py", "sensor.py", "diagnostics.py"):
+        source = (COMPONENT / name).read_text(encoding="utf-8")
+        assert "configured_api_version" in source, f"{name} should use the shared resolver"
+
+    # diagnostics reads the stored value on purpose, to report it alongside the resolved one
+    for name in ("button.py", "sensor.py"):
+        source = (COMPONENT / name).read_text(encoding="utf-8")
+        assert direct_read not in source, f"{name} still reads the stored value directly"
 
 
 def test_auto_is_offered_and_is_the_default():
@@ -195,3 +226,69 @@ def test_auto_option_is_explained_in_strings():
         data = json.loads((COMPONENT / name).read_text(encoding="utf-8"))
         description = data["config"]["step"]["user"]["data_description"]["api_version"]
         assert "auto" in description.lower()
+
+
+# ---------------------------------------------------------------------------
+# The shared resolver, which every reader depends on
+# ---------------------------------------------------------------------------
+
+
+def _load_const():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("veeam_br_const", CONST_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class Entry:
+    """Duck-typed config entry."""
+
+    def __init__(self, data=None, options=None, runtime_data=None):
+        self.data = data or {}
+        self.options = options or {}
+        if runtime_data is not None:
+            self.runtime_data = runtime_data
+
+
+def test_the_resolved_version_wins_once_setup_has_run():
+    const = _load_const()
+    entry = Entry(data={"api_version": "auto"}, runtime_data={"api_version": "1.2-rev1"})
+
+    assert const.configured_api_version(entry) == "1.2-rev1"
+
+
+def test_auto_before_setup_falls_back_to_the_default():
+    """Platforms can ask before the coordinator exists; the default is the honest answer."""
+    const = _load_const()
+
+    assert const.configured_api_version(Entry(data={"api_version": "auto"})) == DEFAULT
+
+
+def test_a_pinned_version_is_returned_as_is():
+    const = _load_const()
+
+    assert const.configured_api_version(Entry(data={"api_version": "1.3-rev0"})) == "1.3-rev0"
+
+
+def test_options_override_data():
+    const = _load_const()
+    entry = Entry(data={"api_version": "1.2-rev1"}, options={"api_version": "1.3-rev1"})
+
+    assert const.configured_api_version(entry) == "1.3-rev1"
+
+
+def test_a_stale_auto_in_runtime_data_is_ignored():
+    """Belt and braces: runtime_data should never hold the sentinel, and if it did, returning
+    it would break every API_VERSIONS lookup downstream."""
+    const = _load_const()
+    entry = Entry(data={"api_version": "auto"}, runtime_data={"api_version": "auto"})
+
+    assert const.configured_api_version(entry) == DEFAULT
+
+
+def test_an_entry_with_no_version_at_all_still_works():
+    const = _load_const()
+
+    assert const.configured_api_version(Entry()) == DEFAULT

@@ -156,3 +156,26 @@ API_FEATURE_REQUIREMENTS = {
     "ha_cluster_switchover_button": "models.high_availability_switchover_spec",
     "ha_cluster_failover_button": "api.high_availability_ha_cluster",
 }
+
+
+def configured_api_version(entry) -> str:
+    """The API version to talk to this server with.
+
+    CONF_API_VERSION may hold AUTO_API_VERSION, which is a user intent rather than a version:
+    it means "use the newest revision this server serves", resolved during setup so a server
+    upgrade or a newer veeam-br is picked up on the next restart. The resolved value is kept in
+    entry.runtime_data, so platforms and entities read it from there rather than re-detecting.
+
+    Falls back to DEFAULT_API_VERSION when asked before setup has resolved anything, which is
+    the same answer detection would give if probing found nothing.
+    """
+    runtime = getattr(entry, "runtime_data", None)
+    if isinstance(runtime, dict):
+        resolved = runtime.get("api_version")
+        if resolved and resolved != AUTO_API_VERSION:
+            return resolved
+
+    stored = entry.options.get(
+        CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
+    )
+    return DEFAULT_API_VERSION if stored == AUTO_API_VERSION else stored

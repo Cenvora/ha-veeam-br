@@ -14,6 +14,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import config_validation as cv, selector
 import voluptuous as vol
 
+from .api_version import async_resolve_api_version
 from .const import (
     API_VERSIONS,
     AUTO_API_VERSION,
@@ -55,46 +56,6 @@ def _get_api_version_selector_config(
         return api_version_options, preferred_version
 
     return api_version_options, AUTO_API_VERSION
-
-
-async def async_resolve_api_version(data: dict[str, Any]) -> str:
-    """Resolve the configured API version, detecting it when set to auto.
-
-    Detection probes the server's Swagger documents (see veeam_br.discovery) and needs no
-    credentials, so it runs before the connection is validated. It is best-effort: a server
-    with Swagger disabled or gated reports nothing, and the static default is used instead
-    of failing setup.
-    """
-    api_version = data.get(CONF_API_VERSION, AUTO_API_VERSION)
-    if api_version != AUTO_API_VERSION:
-        return api_version
-
-    from veeam_br.discovery import detect_api_version
-
-    base_url = f"https://{data[CONF_HOST]}:{data[CONF_PORT]}"
-    verify_ssl = data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
-
-    try:
-        detected = await detect_api_version(
-            base_url,
-            verify_ssl=verify_ssl,
-            versions=list(API_VERSIONS),
-        )
-    except Exception as err:  # noqa: BLE001 - detection must never fail the flow
-        _LOGGER.debug("API version detection failed: %s", err)
-        detected = None
-
-    if detected is None:
-        _LOGGER.info(
-            "Could not detect the API version of %s; using %s. Select a version manually "
-            "if this server needs a different one",
-            data[CONF_HOST],
-            DEFAULT_API_VERSION,
-        )
-        return DEFAULT_API_VERSION
-
-    _LOGGER.info("Detected API version %s on %s", detected, data[CONF_HOST])
-    return detected
 
 
 async def async_find_working_port(data: dict[str, Any], configured_port: int) -> int | None:
@@ -160,12 +121,11 @@ def _load_veeam_br(api_version: str):
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
-    Mutates data[CONF_API_VERSION] when it is set to auto, so the caller stores the resolved
-    version rather than the sentinel: a server upgrade must not silently move an existing
-    entry onto a newer revision, where enum values are renamed and fields added.
+    A stored "auto" is resolved here only to test the connection — it is deliberately not
+    written back. Keeping the sentinel means every setup re-resolves it, so a server upgrade or
+    a newer veeam-br moves the entry onto the newer revision on its own.
     """
     api_version = await async_resolve_api_version(data)
-    data[CONF_API_VERSION] = api_version
 
     try:
         VeeamClient = await hass.async_add_executor_job(_load_veeam_br, api_version)
@@ -418,13 +378,9 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
                 _LOGGER.exception("Unexpected exception validating options")
                 errors["base"] = "unknown"
             else:
-                # validate_input resolved auto into a concrete version; store that rather
-                # than the sentinel, so the entry keeps talking the same revision after a
-                # server upgrade
-                return self.async_create_entry(
-                    title="",
-                    data={**user_input, CONF_API_VERSION: test_data[CONF_API_VERSION]},
-                )
+                # Stored verbatim, including "auto": the point of auto is that it is
+                # re-resolved on every setup rather than frozen at the moment it was chosen
+                return self.async_create_entry(title="", data=user_input)
 
         api_version_options = [AUTO_API_VERSION, *API_VERSIONS.keys()]
 
