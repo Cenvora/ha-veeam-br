@@ -14,7 +14,7 @@
         },
         "data_description": {
           "host": "Nome do host ou endereço IP do servidor Veeam Backup & Replication",
-          "port": "Porta da REST API (padrão: 9419)",
+          "port": "Porta da REST API (padrão: 443)",
           "username": "Nome de usuário com privilégios de administrador",
           "password": "Senha para a conta de usuário especificada",
           "verify_ssl": "Ativar verificação de certificado SSL (desative apenas para certificados autoassinados)",

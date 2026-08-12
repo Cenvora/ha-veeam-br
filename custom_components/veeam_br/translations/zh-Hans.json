@@ -14,7 +14,7 @@
         },
         "data_description": {
           "host": "Veeam Backup & Replication 服务器的主机名或 IP 地址",
-          "port": "REST API 端口（默认值：9419）",
+          "port": "REST API 端口（默认值：443）",
           "username": "具有管理员权限的用户名",
           "password": "指定用户账户的密码",
           "verify_ssl": "启用 SSL 证书验证（仅对自签名证书禁用）",

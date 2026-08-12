@@ -14,7 +14,7 @@
         },
         "data_description": {
           "host": "Hostname or IP address of the Veeam Backup & Replication server",
-          "port": "REST API port (default: 9419)",
+          "port": "REST API port. Veeam B&R 13.1 and newer answer on 443; use 9419 for older releases (it still works on 13.1, but Veeam is deprecating it).",
           "username": "Username with administrator privileges",
           "password": "Password for the specified user account",
           "verify_ssl": "Enable SSL certificate verification (disable only for self-signed certificates)",
@@ -33,7 +33,7 @@
         },
         "data_description": {
           "host": "Hostname or IP address of the Veeam server",
-          "port": "REST API port",
+          "port": "REST API port. Veeam B&R 13.1 and newer answer on 443; use 9419 for older releases (it still works on 13.1, but Veeam is deprecating it).",
           "username": "Administrator username",
           "password": "User password",
           "verify_ssl": "Verify SSL certificates"
