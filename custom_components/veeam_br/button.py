@@ -8,7 +8,7 @@ import logging
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
+from homeassistant.const import CONF_HOST, EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -71,9 +71,12 @@ async def async_setup_entry(
     added_repository_ids: set[str] = set()
     added_sobr_extent_ids: set[tuple[str, str]] = set()  # (sobr_id, extent_id) tuples
     added_job_ids: set[str] = set()
+    ha_cluster_added = False
 
     @callback
     def _sync_entities() -> None:
+        nonlocal ha_cluster_added
+
         if not coordinator.data:
             return
 
@@ -175,6 +178,21 @@ async def async_setup_entry(
                         sobr_id,
                         extent_id,
                     )
+
+        # ---- HA CLUSTER BUTTONS (once) - clustered servers on 1.3-rev2 and newer ----
+        if (
+            not ha_cluster_added
+            and coordinator.data.get("ha_cluster")
+            and check_api_feature_availability(api_version, "api.high_availability_ha_cluster")
+        ):
+            new_entities.extend(
+                [
+                    VeeamHAClusterSwitchoverButton(coordinator, entry, veeam_client),
+                    VeeamHAClusterFailoverButton(coordinator, entry, veeam_client),
+                ]
+            )
+            ha_cluster_added = True
+            _LOGGER.debug("Adding HA cluster buttons")
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam buttons", len(new_entities))
@@ -957,4 +975,145 @@ class VeeamJobDisableButton(VeeamJobButtonBase):
                 self._job_name,
                 call_err,
             )
+            raise
+
+
+# ===========================
+# HIGH AVAILABILITY CLUSTER BUTTONS
+#
+# Switchover is the planned, graceful role swap; failover is the unplanned one for when the
+# primary is already gone. Both are disruptive, and Home Assistant buttons fire with no
+# confirmation step, so failover is disabled by default — a user automating it has to enable
+# the entity deliberately. See the README for the distinction.
+# ===========================
+
+
+class VeeamHAClusterButtonBase(CoordinatorEntity, ButtonEntity):
+    """Base class for HA cluster buttons."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry, veeam_client):
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._veeam_client = veeam_client
+
+    def _cluster(self) -> dict | None:
+        """Get HA cluster data from coordinator data."""
+        return self.coordinator.data.get("ha_cluster") if self.coordinator.data else None
+
+    @property
+    def available(self) -> bool:
+        """A cluster mid-failover cannot take another switchover or failover."""
+        cluster = self._cluster()
+        if cluster is None:
+            return False
+        in_progress = cluster.get("is_failover_in_progress") or cluster.get(
+            "is_endpoint_migration_in_progress"
+        )
+        return super().available and not in_progress
+
+    @property
+    def device_info(self):
+        """Return device info for the HA cluster."""
+        cluster = self._cluster()
+        name = (cluster.get("name") if cluster else None) or "HA Cluster"
+        host = self._config_entry.data.get(CONF_HOST, "Unknown")
+        return {
+            "identifiers": {(DOMAIN, f"ha_cluster_{self._config_entry.entry_id}")},
+            "name": f"{name} ({host})",
+            "manufacturer": "Veeam",
+            "model": "High Availability Cluster",
+        }
+
+    def _api_module(self) -> str:
+        """Resolve the SDK package for the configured API version."""
+        api_version = self._config_entry.options.get(
+            CONF_API_VERSION,
+            self._config_entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION),
+        )
+        return API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
+
+
+class VeeamHAClusterSwitchoverButton(VeeamHAClusterButtonBase):
+    """Button to switch the cluster over to its secondary node."""
+
+    def __init__(self, coordinator, config_entry, veeam_client):
+        """Initialize the button."""
+        super().__init__(coordinator, config_entry, veeam_client)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_switchover"
+        self._attr_name = "Switchover"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the button."""
+        return "mdi:swap-horizontal"
+
+    async def async_press(self) -> None:
+        """Handle the button press to switch the cluster over."""
+        try:
+            api_module = self._api_module()
+
+            # The spec is optional; sending it explicitly keeps the lag check in force, so a
+            # switchover with a badly lagging secondary is refused by the server instead of
+            # silently promoting a stale node.
+            body = None
+            try:
+                models_module = await asyncio.to_thread(
+                    importlib.import_module,
+                    f"veeam_br.{api_module}.models.high_availability_switchover_spec",
+                )
+                body = models_module.HighAvailabilitySwitchoverSpec(ignore_lag=False)
+            except (ImportError, AttributeError) as err:
+                _LOGGER.debug(
+                    "HighAvailabilitySwitchoverSpec unavailable (%s); "
+                    "requesting switchover without a body",
+                    err,
+                )
+
+            try:
+                ha_api = await asyncio.to_thread(
+                    self._veeam_client.api, "high_availability_ha_cluster"
+                )
+                kwargs = {"body": body} if body is not None else {}
+                await self._veeam_client.call(ha_api.switchover_high_availability_cluster, **kwargs)
+                _LOGGER.info("Requested HA cluster switchover")
+                await self.coordinator.async_request_refresh()
+            except Exception as call_err:
+                _LOGGER.error("Failed to switch over the HA cluster: %s", call_err)
+                raise
+
+        except Exception as err:
+            _LOGGER.error("Error switching over the HA cluster: %s", err)
+            raise
+
+
+class VeeamHAClusterFailoverButton(VeeamHAClusterButtonBase):
+    """Button to fail the cluster over to its secondary node."""
+
+    # Unplanned failover promotes the secondary without waiting for the primary. It is an
+    # emergency action, so it ships disabled and the user enables it consciously.
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator, config_entry, veeam_client):
+        """Initialize the button."""
+        super().__init__(coordinator, config_entry, veeam_client)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_failover"
+        self._attr_name = "Failover"
+
+    @property
+    def icon(self) -> str:
+        """Return the icon for the button."""
+        return "mdi:alert-octagon"
+
+    async def async_press(self) -> None:
+        """Handle the button press to fail the cluster over."""
+        try:
+            ha_api = await asyncio.to_thread(self._veeam_client.api, "high_availability_ha_cluster")
+            await self._veeam_client.call(ha_api.failover_high_availability_cluster)
+            _LOGGER.warning("Requested HA cluster failover")
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            _LOGGER.error("Failed to fail over the HA cluster: %s", err)
             raise
