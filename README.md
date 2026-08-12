@@ -417,6 +417,26 @@ If you report a problem, please include the license edition — the diagnostics 
 (⋮ → *Download diagnostics*) contains it, along with the API version and library version, and
 no credentials.
 
+## Entity States
+
+Values that the REST API reports as identifiers are shown as readable labels:
+`EnterprisePlus` becomes *Enterprise Plus*, `ProxmoxBackupJob` becomes *Proxmox Backup Job*,
+`WinLocal` becomes *Windows (local)*, and `inactive` becomes *Inactive*. Job status is lower
+case on API 1.2-rev1 and capitalised on 1.3-rev*, so labels are matched case-insensitively and
+render identically whichever server answers.
+
+Every sensor whose state is a label also carries the untouched API value as a `raw_value`
+attribute, so automations that need to match exactly have something stable:
+
+```yaml
+{{ state_attr('sensor.nightly_vms_last_result', 'raw_value') == 'Failed' }}
+```
+
+> [!NOTE]
+> This changed in 0.6.0. Templates comparing against raw identifiers — `== 'EnterprisePlus'`,
+> `== 'inactive'` — should switch to `raw_value`, or compare case-insensitively against the
+> label. The shipped blueprints already compare lower-cased and were unaffected.
+
 ## Known Limitations
 
 - **Veeam Community Edition / unlicensed servers**: Not supported. The integration detects
