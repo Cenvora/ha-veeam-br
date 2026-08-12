@@ -88,7 +88,8 @@ The integration supports the following configuration options:
 
 #### Required Parameters
 - **Host**: Your Veeam Backup & Replication server hostname or IP address
-- **Port**: REST API port (default: 9419)
+- **Port**: REST API port (default: 443). Veeam B&R 13.1 and newer serve the REST API on
+  443; use 9419 for older releases
 - **Username**: Account with administrator privileges on the Veeam server
 - **Password**: Password for the specified user account
 
@@ -105,7 +106,7 @@ The integration supports the following configuration options:
 3. Search for "Veeam Backup & Replication"
 4. Enter your Veeam server details:
    - **Host**: Your Veeam server hostname or IP address
-   - **Port**: REST API port (default: 9419)
+   - **Port**: REST API port (default: 443, or 9419 on releases before 13.1)
    - **Username**: Veeam server username
    - **Password**: Veeam server password
    - **Verify SSL**: Whether to verify SSL certificates (recommended: enabled)
@@ -288,8 +289,9 @@ All devices and entities associated with this integration will be removed.
 **Solutions**:
 - Verify the Veeam server is running and accessible from Home Assistant
 - Check that the REST API is enabled on the Veeam server
-- Confirm the hostname/IP and port (default: 9419) are correct
-- Ensure firewall rules allow traffic on port 9419
+- Confirm the hostname/IP and port are correct — 443 on Veeam B&R 13.1 and newer, 9419 on
+  older releases
+- Ensure firewall rules allow traffic on the REST API port (443, or 9419 on older releases)
 - Try disabling SSL verification if using self-signed certificates
 
 ### Authentication Failures

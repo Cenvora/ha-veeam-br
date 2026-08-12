@@ -14,7 +14,7 @@
         },
         "data_description": {
           "host": "Název hostitele nebo IP adresa serveru Veeam Backup & Replication",
-          "port": "Port REST API (výchozí: 9419)",
+          "port": "Port REST API (výchozí: 443)",
           "username": "Uživatelské jméno s administrátorskými oprávněními",
           "password": "Heslo pro zadaný uživatelský účet",
           "verify_ssl": "Povolit ověření SSL certifikátu (zakázat pouze pro sebepodepsané certifikáty)",

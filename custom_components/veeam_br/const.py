@@ -13,7 +13,14 @@ CONF_VERIFY_SSL = "verify_ssl"
 CONF_API_VERSION = "api_version"
 
 # Defaults
-DEFAULT_PORT = 9419
+# Veeam B&R 13.1 serves the REST API on 443 and no longer needs a dedicated port. 9419
+# still answers on 13.1 for backward compatibility, but Veeam has said it will be removed in
+# a future release, so new setups should start on 443. Existing entries keep whatever port
+# they were configured with — this default only pre-fills the form.
+DEFAULT_PORT = 443
+
+# Pre-13.1 REST API port, still accepted by 13.1 and deprecated
+LEGACY_PORT = 9419
 DEFAULT_VERIFY_SSL = True
 # Newest API revision shipped by veeam-br, served by Veeam B&R 13.1. Bump this together
 # with FALLBACK_API_VERSIONS when veeam-br adds a revision. Users on older servers can

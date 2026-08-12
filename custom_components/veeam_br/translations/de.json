@@ -14,7 +14,7 @@
         },
         "data_description": {
           "host": "Hostname oder IP-Adresse des Veeam Backup & Replication Servers",
-          "port": "REST API Port (Standard: 9419)",
+          "port": "REST API Port (Standard: 443)",
           "username": "Benutzername mit Administratorrechten",
           "password": "Passwort für das angegebene Benutzerkonto",
           "verify_ssl": "SSL-Zertifikatüberprüfung aktivieren (nur bei selbstsignierten Zertifikaten deaktivieren)",
