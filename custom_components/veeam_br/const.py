@@ -21,6 +21,12 @@ DEFAULT_VERIFY_SSL = True
 # revision the server does not serve fails at setup rather than silently.
 DEFAULT_API_VERSION = "1.3-rev2"
 
+# Selector sentinel: probe the server for the newest API version it serves (see
+# api_discovery). Never stored on a config entry — it resolves to a concrete version when
+# the entry is created or reconfigured, so a later server upgrade cannot silently change
+# which revision an existing entry talks.
+AUTO_API_VERSION = "auto"
+
 _LOGGER = logging.getLogger(__name__)
 
 # Fallback used when the veeam-br package cannot be inspected. Mirrors the
