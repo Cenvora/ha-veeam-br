@@ -252,15 +252,28 @@ def test_cluster_fetch_is_version_guarded():
 
 
 def test_unclustered_server_is_not_an_error():
-    """Most servers are not clustered; that must not log a warning every poll."""
+    """Most servers are not clustered; that must not log a warning every poll.
+
+    The behaviour itself — which Error means "no cluster" and which means a real failure —
+    is tested in test_license_dates.py against the server's actual 400 payload. This checks
+    the two are wired to the right log levels.
+    """
     content = INIT_PATH.read_text(encoding="utf-8")
 
-    marker = "No HA cluster reported by this server"
+    marker = "No HA cluster on this server"
     assert marker in content
     line_start = content.rindex("_LOGGER.", 0, content.index(marker))
     assert content[line_start:].startswith(
         "_LOGGER.debug"
     ), "an unclustered server should be a debug message, not a warning"
+
+    # An auth or server error arrives as the same Error model and must not be buried
+    failure = "Could not read the HA cluster"
+    assert failure in content
+    line_start = content.rindex("_LOGGER.", 0, content.index(failure))
+    assert content[line_start:].startswith(
+        "_LOGGER.warning"
+    ), "401/403/500 come back as an Error too, and should be reported"
 
 
 def test_failover_button_is_disabled_by_default():

@@ -175,6 +175,18 @@ async def async_setup_entry(
                     VeeamLicenseCloudConnectSensor(coordinator, entry),
                 ]
             )
+
+            # Instance-based licences only: a socket or capacity licence counts other units
+            if coordinator.data["license_info"].get("instances_licensed") is not None:
+                new_entities.extend(
+                    [
+                        VeeamLicenseInstancesLicensedSensor(coordinator, entry),
+                        VeeamLicenseInstancesUsedSensor(coordinator, entry),
+                    ]
+                )
+                if coordinator.data["license_info"].get("instances_used_percent") is not None:
+                    new_entities.append(VeeamLicenseInstancesUsedPercentSensor(coordinator, entry))
+
             license_added = True
 
         # ---- HA CLUSTER SENSORS (once) - clustered servers on 1.3-rev2 and newer only ----
@@ -1697,3 +1709,107 @@ class VeeamHAClusterNodeLagSensor(VeeamHAClusterNodeSensorBase):
     @property
     def icon(self) -> str:
         return "mdi:timer-sand"
+
+
+# ===========================
+# LICENSE USAGE (instance-based licensing)
+#
+# Only created when the server reports an instanceLicenseSummary. Socket and capacity
+# licenses count different units, so instance sensors would be meaningless for them.
+# ===========================
+
+
+class VeeamLicenseInstancesLicensedSensor(VeeamLicenseBaseSensor):
+    """Sensor for the number of licensed instances."""
+
+    _attr_native_unit_of_measurement = "instances"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_license_instances_licensed"
+        self._attr_name = "Instances Licensed"
+
+    @property
+    def native_value(self):
+        license_info = self._license_info()
+        return license_info.get("instances_licensed") if license_info else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        license_info = self._license_info() or {}
+        return {
+            "package": license_info.get("package"),
+            "new_instances": license_info.get("instances_new"),
+            "rental_instances": license_info.get("instances_rental"),
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:counter"
+
+
+class VeeamLicenseInstancesUsedSensor(VeeamLicenseBaseSensor):
+    """Sensor for the number of licensed instances in use."""
+
+    _attr_native_unit_of_measurement = "instances"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_license_instances_used"
+        self._attr_name = "Instances Used"
+
+    @property
+    def native_value(self):
+        license_info = self._license_info()
+        return license_info.get("instances_used") if license_info else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The per-type breakdown, which is small and stable.
+
+        The full workload list is deliberately not exposed: a large estate has thousands of
+        entries, and state attributes are recorded on every update.
+        """
+        license_info = self._license_info() or {}
+        attributes: dict[str, Any] = {
+            "protected_workloads": license_info.get("instance_workload_count"),
+        }
+        for item in license_info.get("instance_objects") or []:
+            name = (item.get("type") or "unknown").lower().replace(" ", "_")
+            attributes[name] = item.get("used")
+        return attributes
+
+    @property
+    def icon(self) -> str:
+        return "mdi:counter"
+
+
+class VeeamLicenseInstancesUsedPercentSensor(VeeamLicenseBaseSensor):
+    """Sensor for how much of the instance licence is consumed."""
+
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_license_instances_used_percent"
+        self._attr_name = "Instances Used Percentage"
+
+    @property
+    def native_value(self):
+        license_info = self._license_info()
+        return license_info.get("instances_used_percent") if license_info else None
+
+    @property
+    def icon(self) -> str:
+        value = self.native_value
+        if value is None:
+            return "mdi:gauge"
+        if value >= 90:
+            return "mdi:gauge-full"
+        if value >= 70:
+            return "mdi:gauge-low"
+        return "mdi:gauge"

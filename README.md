@@ -170,7 +170,9 @@ The integration also creates devices for:
 - **Repositories**: Each repository device has sensors for type, capacity, free space, used space, online status, etc., and a rescan button.
 - **Scale-Out Backup Repositories (SOBRs)**: Each SOBR device has sensors for description, extent count, and buttons for each extent to enable/disable sealed mode and maintenance mode.
 - **Server**: Server device has sensors for build version, platform, database info, etc.
-- **License**: License device has sensors for status, edition, expiration dates, etc.
+- **License**: License device has sensors for status, edition, expiration dates, and — on
+  instance-based licences — instances licensed, instances used and percentage used, with the
+  per-workload-type breakdown as attributes.
 - **High Availability Cluster**: on a clustered Veeam B&R 13.1 server (API `1.3-rev2`), a
   cluster device with online and failover-in-progress sensors, cluster endpoint and last-online
   diagnostics, per-node replication state, Patroni role and replication lag, plus switchover
