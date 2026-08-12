@@ -266,6 +266,11 @@ All devices and entities associated with this integration will be removed.
 - **Large Deployments**: Polling 100+ jobs may take several seconds per cycle
 - **Real-time Updates**: Changes reflected every 60 seconds, not immediately
 - **SSL Certificates**: Self-signed certificates require SSL verification to be disabled
+- **Null Timestamps**: Veeam's published API schema declares timestamps such as
+  `lastRun`/`nextRun` as non-nullable, but the server sends `null` for jobs that are
+  *Not scheduled* or have never run. The `veeam-br` models are generated from that schema, so
+  they reject the whole jobs response ([#83](https://github.com/Cenvora/ha-veeam-br/issues/83)).
+  The integration patches the affected models at startup to read a null timestamp as absent.
 - **API Version Must Match New Workloads**: the client rejects enum values it does not know, and
   the jobs response is parsed as a whole. If the server returns a job type the selected API
   version predates — a Proxmox VE or Nutanix AHV job on 13.1 read over `1.3-rev1`, for example —
