@@ -35,7 +35,7 @@ from .sdk_patches import patch_models as patch_null_values_in_models
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BUTTON]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.BUTTON]
 
 # High Availability cluster endpoints exist only from API 1.3-rev2 (VBR 13.1)
 HA_CLUSTER_FEATURE = "api.high_availability_ha_cluster"
