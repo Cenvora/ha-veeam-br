@@ -266,6 +266,11 @@ All devices and entities associated with this integration will be removed.
 - **Large Deployments**: Polling 100+ jobs may take several seconds per cycle
 - **Real-time Updates**: Changes reflected every 60 seconds, not immediately
 - **SSL Certificates**: Self-signed certificates require SSL verification to be disabled
+- **API Version Must Match New Workloads**: the client rejects enum values it does not know, and
+  the jobs response is parsed as a whole. If the server returns a job type the selected API
+  version predates — a Proxmox VE or Nutanix AHV job on 13.1 read over `1.3-rev1`, for example —
+  *all* job entities become unavailable, not just that job. Selecting the API version matching
+  your server avoids this.
 
 ## Supported Devices & Functions
 
@@ -273,7 +278,8 @@ All devices and entities associated with this integration will be removed.
 
 The integration monitors the following Veeam objects:
 
-- ✅ **Backup Jobs** - All job types (Backup, Replica, Copy, etc.)
+- ✅ **Backup Jobs** - All job types (Backup, Replica, Copy, etc.), including the Proxmox VE
+  and Nutanix AHV job types added in Veeam B&R 13.1 (requires the `1.3-rev2` API version)
 - ✅ **Repositories** - Standard backup repositories
 - ✅ **Scale-Out Repositories** - SOBR and extents
 - ✅ **Server Information** - Veeam server details
