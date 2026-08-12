@@ -209,13 +209,21 @@ def test_reconfigure_flow():
         strings = json.load(f)
 
     assert "reconfigure" in strings["config"]["step"], "strings.json should have reconfigure step"
-    
+
     # Check that abort messages exist for reconfigure and reauth
     assert "abort" in strings["config"], "strings.json should have abort section"
-    assert "reconfigure_successful" in strings["config"]["abort"], "strings.json should have reconfigure_successful abort message"
-    assert "reauth_successful" in strings["config"]["abort"], "strings.json should have reauth_successful abort message"
-    assert "cannot_connect" in strings["config"]["abort"], "strings.json should have cannot_connect abort message"
-    assert "invalid_auth" in strings["config"]["abort"], "strings.json should have invalid_auth abort message"
+    assert (
+        "reconfigure_successful" in strings["config"]["abort"]
+    ), "strings.json should have reconfigure_successful abort message"
+    assert (
+        "reauth_successful" in strings["config"]["abort"]
+    ), "strings.json should have reauth_successful abort message"
+    assert (
+        "cannot_connect" in strings["config"]["abort"]
+    ), "strings.json should have cannot_connect abort message"
+    assert (
+        "invalid_auth" in strings["config"]["abort"]
+    ), "strings.json should have invalid_auth abort message"
     assert "unknown" in strings["config"]["abort"], "strings.json should have unknown abort message"
 
 
@@ -300,34 +308,34 @@ def test_stale_entity_cleanup_uses_registry_scan():
     # entity unique_ids by substring. The new approach must scan the full registry
     # using async_entries_for_config_entry and compare against current API data.
     # Verify the new approach is used instead of the old set-difference pattern.
-    assert "stale_job_ids = current_job_ids - current_jobs_in_data" not in sensor_content, (
-        "sensor.py should not use session-scoped set-difference for stale job detection"
-    )
-    assert "stale_repo_ids = current_repo_ids - current_repos_in_data" not in sensor_content, (
-        "sensor.py should not use session-scoped set-difference for stale repo detection"
-    )
-    assert "stale_sobr_ids = current_sobr_ids - current_sobrs_in_data" not in sensor_content, (
-        "sensor.py should not use session-scoped set-difference for stale SOBR detection"
-    )
-    assert "stale_job_ids = current_job_ids - current_jobs_in_data" not in button_content, (
-        "button.py should not use session-scoped set-difference for stale job detection"
-    )
+    assert (
+        "stale_job_ids = current_job_ids - current_jobs_in_data" not in sensor_content
+    ), "sensor.py should not use session-scoped set-difference for stale job detection"
+    assert (
+        "stale_repo_ids = current_repo_ids - current_repos_in_data" not in sensor_content
+    ), "sensor.py should not use session-scoped set-difference for stale repo detection"
+    assert (
+        "stale_sobr_ids = current_sobr_ids - current_sobrs_in_data" not in sensor_content
+    ), "sensor.py should not use session-scoped set-difference for stale SOBR detection"
+    assert (
+        "stale_job_ids = current_job_ids - current_jobs_in_data" not in button_content
+    ), "button.py should not use session-scoped set-difference for stale job detection"
 
     # Verify that the cleanup uses entity registry scanning
-    assert "async_entries_for_config_entry" in sensor_content, (
-        "sensor.py stale cleanup should scan the entity registry"
-    )
-    assert "async_entries_for_config_entry" in button_content, (
-        "button.py stale cleanup should scan the entity registry"
-    )
+    assert (
+        "async_entries_for_config_entry" in sensor_content
+    ), "sensor.py stale cleanup should scan the entity registry"
+    assert (
+        "async_entries_for_config_entry" in button_content
+    ), "button.py stale cleanup should scan the entity registry"
 
     # Verify that device registry cleanup is present in sensor.py
-    assert "device_registry" in sensor_content or "dr.async_get" in sensor_content, (
-        "sensor.py should clean up orphaned devices from the device registry"
-    )
-    assert "async_remove_device" in sensor_content, (
-        "sensor.py should remove orphaned devices via device_registry.async_remove_device"
-    )
+    assert (
+        "device_registry" in sensor_content or "dr.async_get" in sensor_content
+    ), "sensor.py should clean up orphaned devices from the device registry"
+    assert (
+        "async_remove_device" in sensor_content
+    ), "sensor.py should remove orphaned devices via device_registry.async_remove_device"
 
 
 def test_validate_input_reraises_permission_error():
@@ -348,15 +356,13 @@ def test_validate_input_reraises_permission_error():
 
     # The validate_input function must re-raise PermissionError before the generic
     # Exception handler, so that callers can distinguish auth vs connection errors.
-    assert "except PermissionError:" in content, (
-        "validate_input should catch PermissionError separately"
-    )
+    assert (
+        "except PermissionError:" in content
+    ), "validate_input should catch PermissionError separately"
     # PermissionError handler must contain a bare 'raise' before the generic except Exception
     assert re.search(
         r"except\s+PermissionError\s*:.*?raise.*?except\s+Exception", content, re.DOTALL
-    ), (
-        "validate_input should re-raise PermissionError (not wrap it in ConnectionError)"
-    )
+    ), "validate_input should re-raise PermissionError (not wrap it in ConnectionError)"
 
 
 def test_user_step_preserves_input_on_error():
@@ -376,15 +382,15 @@ def test_user_step_preserves_input_on_error():
         content = f.read()
 
     # Verify that host, port and username are populated from user_input when present
-    assert "host_default" in content, (
-        "async_step_user should compute host_default from user_input to preserve the field"
-    )
-    assert "username_default" in content, (
-        "async_step_user should compute username_default from user_input to preserve the field"
-    )
-    assert "port_default" in content, (
-        "async_step_user should compute port_default from user_input to preserve the field"
-    )
+    assert (
+        "host_default" in content
+    ), "async_step_user should compute host_default from user_input to preserve the field"
+    assert (
+        "username_default" in content
+    ), "async_step_user should compute username_default from user_input to preserve the field"
+    assert (
+        "port_default" in content
+    ), "async_step_user should compute port_default from user_input to preserve the field"
 
     # Password must NOT be preserved (security requirement).
     # Find the async_step_user function body up to the next top-level definition.
@@ -396,9 +402,9 @@ def test_user_step_preserves_input_on_error():
     assert user_step_match, "async_step_user should be present"
     user_step_body = user_step_match.group(0)
 
-    assert "password_default" not in user_step_body, (
-        "async_step_user must NOT define a password_default; password should never be pre-filled"
-    )
+    assert (
+        "password_default" not in user_step_body
+    ), "async_step_user must NOT define a password_default; password should never be pre-filled"
 
 
 def test_hlr_immutability_logic():
@@ -411,13 +417,13 @@ def test_hlr_immutability_logic():
         content = f.read()
 
     # Verify HLR immutability logic is present
-    assert "makeRecentBackupsImmutableDays" in content, (
-        "__init__.py should check makeRecentBackupsImmutableDays for Linux Hardened repos"
-    )
+    assert (
+        "makeRecentBackupsImmutableDays" in content
+    ), "__init__.py should check makeRecentBackupsImmutableDays for Linux Hardened repos"
     # Verify that HLR check is guarded so it doesn't override S3 immutability
-    assert '"is_immutable" not in repo_dict' in content, (
-        "HLR immutability check should only run when S3 immutability was not already found"
-    )
+    assert (
+        '"is_immutable" not in repo_dict' in content
+    ), "HLR immutability check should only run when S3 immutability was not already found"
 
 
 def test_api_v1_2_rev1_jobs_error_handling():
@@ -446,9 +452,9 @@ def test_api_v1_2_rev1_jobs_error_handling():
         content,
         flags=re.DOTALL,
     )
-    assert jobs_error_match is not None, (
-        "__init__.py should catch jobs API parsing errors and log them gracefully"
-    )
+    assert (
+        jobs_error_match is not None
+    ), "__init__.py should catch jobs API parsing errors and log them gracefully"
     jobs_error_block = jobs_error_match.group(1)
 
     # The per-job inner loop must also catch ValueError (e.g. unknown enum values)
@@ -456,9 +462,9 @@ def test_api_v1_2_rev1_jobs_error_handling():
     # Check that all four exception types are present within the jobs outer
     # try/except block, without requiring a specific tuple order.
     for exc_type in ("ValueError", "KeyError", "AttributeError", "TypeError"):
-        assert exc_type in jobs_error_block, (
-            f"__init__.py jobs outer try/except should catch {exc_type}"
-        )
+        assert (
+            exc_type in jobs_error_block
+        ), f"__init__.py jobs outer try/except should catch {exc_type}"
 
 
 def test_api_v1_2_rev1_sobr_extent_status():
@@ -486,4 +492,134 @@ def test_api_v1_2_rev1_sobr_extent_status():
     assert "[s.value for s in extent.status]" not in content, (
         "__init__.py must not iterate directly over extent.status — "
         "that fails when status is a str-subclass enum (v1.2-rev1)"
+    )
+
+
+def _load_const():
+    """Load const.py standalone.
+
+    const.py imports only the standard library, so it can be loaded without Home
+    Assistant installed (unlike the rest of the integration package).
+    """
+    import importlib.util
+    from pathlib import Path
+
+    const_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "const.py"
+    spec = importlib.util.spec_from_file_location("veeam_br_const", const_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_api_1_3_rev2_supported():
+    """Test that API version 1.3-rev2 (Veeam B&R 13.1) is supported and is the default."""
+    const = _load_const()
+
+    assert (
+        "1.3-rev2" in const.FALLBACK_API_VERSIONS
+    ), "1.3-rev2 must be in the fallback API version list (Veeam B&R 13.1)"
+    assert const.FALLBACK_API_VERSIONS["1.3-rev2"] == "v1_3_rev2"
+    assert const.DEFAULT_API_VERSION == "1.3-rev2", "Default API version should be the newest"
+    assert const.DEFAULT_API_MODULE == "v1_3_rev2"
+    assert (
+        const.DEFAULT_API_VERSION in const.FALLBACK_API_VERSIONS
+    ), "DEFAULT_API_VERSION must be a known API version"
+
+
+def test_manifest_requires_veeam_br_with_rev2():
+    """Test that the manifest requires a veeam-br release that ships v1_3_rev2."""
+    import json
+    from pathlib import Path
+
+    manifest_path = (
+        Path(__file__).parent.parent / "custom_components" / "veeam_br" / "manifest.json"
+    )
+
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+
+    requirement = next(r for r in manifest["requirements"] if r.startswith("veeam-br"))
+
+    # v1_3_rev2 first shipped in veeam-br 0.3.0
+    assert (
+        ">=0.3.0" in requirement
+    ), f"veeam-br requirement should be >=0.3.0 for 1.3-rev2 support, got {requirement}"
+
+
+def test_api_versions_discovery_is_sorted(tmp_path, monkeypatch):
+    """Test that discovered API versions are ordered oldest to newest.
+
+    os.listdir order is filesystem-dependent, so the selector order (and the
+    first-option fallback in the config flow) must not rely on it.
+    """
+    const = _load_const()
+
+    # Fake veeam_br package directory, created in an order that is not the sorted order
+    for name in (
+        "v1_3_rev10",
+        "v1_2_rev1",
+        "v1_3_rev2",
+        "v1_10_rev0",
+        "v1_3_rev0",
+        "not_a_version",
+    ):
+        (tmp_path / name).mkdir()
+
+    class FakeSpec:
+        submodule_search_locations = [str(tmp_path)]
+        origin = None
+
+    monkeypatch.setattr(const.importlib.util, "find_spec", lambda name: FakeSpec())
+
+    versions = const._discover_api_versions()
+
+    assert list(versions.keys()) == [
+        "1.2-rev1",
+        "1.3-rev0",
+        "1.3-rev2",
+        "1.3-rev10",
+        "1.10-rev0",
+    ], "API versions should be sorted numerically, and non-version directories ignored"
+
+
+def test_api_versions_discovery_falls_back(monkeypatch):
+    """Test that discovery falls back to the static list when veeam_br is unavailable."""
+    const = _load_const()
+
+    monkeypatch.setattr(const.importlib.util, "find_spec", lambda name: None)
+    assert const._discover_api_versions() == const.FALLBACK_API_VERSIONS
+
+    def boom(name):
+        raise RuntimeError("broken package")
+
+    monkeypatch.setattr(const.importlib.util, "find_spec", boom)
+    assert const._discover_api_versions() == const.FALLBACK_API_VERSIONS
+
+
+def test_fallback_api_versions_cover_library():
+    """Test that the fallback list covers every version the installed veeam-br ships.
+
+    The fallback may list newer revisions than an older installed library provides, but it
+    must never omit one the library supports — otherwise that version is unselectable when
+    package inspection fails.
+    """
+    try:
+        from veeam_br.versions import VERSION_TO_PACKAGE
+    except ImportError:
+        pytest.skip("veeam-br not installed")
+
+    const = _load_const()
+
+    library_versions = {
+        version: package.rsplit(".", 1)[-1] for version, package in VERSION_TO_PACKAGE.items()
+    }
+    missing = {
+        version: module
+        for version, module in library_versions.items()
+        if const.FALLBACK_API_VERSIONS.get(version) != module
+    }
+
+    assert not missing, (
+        f"FALLBACK_API_VERSIONS is missing versions shipped by veeam-br: {missing}. "
+        "It should mirror veeam_br.versions.VERSION_TO_PACKAGE."
     )

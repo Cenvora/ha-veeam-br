@@ -27,6 +27,24 @@ This project is an independent, open source project. It is not affiliated with, 
 - Home Assistant 2023.1.0 or newer
 - Veeam Backup & Replication server with REST API enabled (Community Edition not supported)
 
+### Supported API Versions
+
+The **API Version** option selects the REST API revision used against your server. It
+defaults to the newest revision; on an older server, pick the revision matching your VBR
+release. Veeam also serves older revisions to newer servers, so a lower revision is a safe
+choice if you are unsure.
+
+| VBR Version | API Version | Notes |
+| ----------- | ----------- | ----- |
+| 13.1.0.411  | `1.3-rev2`  | Default |
+| 13.0.1.180  | `1.3-rev1`  | |
+| 13.0.0.4967 | `1.3-rev0`  | |
+| 12.3.1.1139 | `1.2-rev1`  | |
+
+Older VBR releases are not supported. The list is discovered at runtime from the installed
+[veeam-br](https://github.com/Cenvora/veeam-br) library, so it reflects whichever revisions
+that version ships (`1.3-rev2` requires veeam-br 0.3.0 or newer).
+
 ## Installation
 ### HACS (Recommended)
 

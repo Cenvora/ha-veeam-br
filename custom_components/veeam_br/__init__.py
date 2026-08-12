@@ -17,6 +17,7 @@ from .const import (
     API_VERSIONS,
     CONF_API_VERSION,
     CONF_VERIFY_SSL,
+    DEFAULT_API_MODULE,
     DEFAULT_API_VERSION,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
@@ -35,7 +36,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_version = entry.options.get(
         CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
     )
-    api_module = API_VERSIONS.get(api_version, "v1_3_rev1")
+    api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
 
     # Import UNSET type for proper type checking
     try:
