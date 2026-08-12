@@ -282,5 +282,11 @@
         "invalid": "Invalid"
       }
     }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Unsupported Veeam license on {host}",
+      "description": "The Veeam Backup & Replication server at **{host}** reports the license **{license}**.\n\nVeeam Community Edition, and servers with no license installed, are not supported by this integration: entitlements differ and some REST API endpoints answer differently or not at all, so entities may be missing or unreliable.\n\nThe integration keeps running — nothing is blocked. If you hit problems, please include this license edition in your bug report. Install a supported license, or remove the integration, to clear this warning."
+    }
   }
 }

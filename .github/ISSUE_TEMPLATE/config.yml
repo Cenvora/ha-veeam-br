@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Veeam REST API library (veeam-br)
+    url: https://github.com/Cenvora/veeam-br/issues
+    about: Report parsing errors, authentication problems, or missing API versions there.
+  - name: Veeam Backup & Replication REST API reference
+    url: https://helpcenter.veeam.com/docs/backup/vbr_rest/overview.html
+    about: Veeam's own documentation for the API this integration uses.

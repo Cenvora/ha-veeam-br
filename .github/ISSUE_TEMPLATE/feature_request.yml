@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest an entity, action, or Veeam capability to support
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: |
+        Describe the outcome you are after rather than the implementation — what would you
+        automate or see on a dashboard?
+    validations:
+      required: true
+
+  - type: input
+    id: veeam-feature
+    attributes:
+      label: Veeam feature or REST endpoint
+      description: |
+        If you know which part of Veeam this maps to, name it — an endpoint from
+        `https://<your-server>:9419/swagger/index.html`, or the feature's name in the console.
+      placeholder: "e.g. malware detection events, /api/v1/malwareDetection/events"
+    validations:
+      required: false
+
+  - type: input
+    id: vbr-version
+    attributes:
+      label: Veeam Backup & Replication version
+      description: Which build has this feature, if it is version-specific.
+      placeholder: "13.1.0.411"
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else
+      description: Example automations, screenshots, or links to Veeam documentation.
+    validations:
+      required: false

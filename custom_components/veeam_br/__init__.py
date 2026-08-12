@@ -11,6 +11,7 @@ import sys
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -25,6 +26,7 @@ from .const import (
     UPDATE_INTERVAL,
     check_api_feature_availability,
 )
+from .licensing import describe_license, unsupported_license_reason
 from .sdk_patches import patch_models as patch_null_values_in_models
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,6 +124,49 @@ def _parse_ha_cluster(cluster, get_enum_value, get_uuid_value, serialize_value) 
         parsed.setdefault(key, serialize_value(value))
 
     return parsed
+
+
+def _license_issue_id(entry: ConfigEntry) -> str:
+    """Repair issue ID for one config entry's license warning."""
+    return f"unsupported_license_{entry.entry_id}"
+
+
+def _check_license_support(hass: HomeAssistant, entry: ConfigEntry, data: dict | None) -> None:
+    """Warn when the server's license is outside what this integration supports.
+
+    Raised as a repair issue rather than only a log line, so it is visible without digging
+    through logs, and cleared automatically once the server reports a supported license.
+    Never blocks setup: a Community Edition server that works is not worth refusing.
+    """
+    license_info = (data or {}).get("license_info")
+    reason = unsupported_license_reason(license_info)
+    issue_id = _license_issue_id(entry)
+
+    if reason is None:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+
+    _LOGGER.warning(
+        "Veeam server %s reports license %s, which this integration does not support (%s). "
+        "Setup will continue, but entities may be missing or unreliable. Please include the "
+        "license edition when reporting problems",
+        entry.data.get(CONF_HOST, "unknown"),
+        describe_license(license_info),
+        reason,
+    )
+
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key="unsupported_license",
+        translation_placeholders={
+            "host": str(entry.data.get(CONF_HOST, "unknown")),
+            "license": describe_license(license_info),
+        },
+    )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -736,6 +781,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await coordinator.async_config_entry_first_refresh()
 
+    # Runs on every setup, so a reload re-reports it and a newly licensed server clears it
+    _check_license_support(hass, entry, coordinator.data)
+
     entry.runtime_data = {
         "coordinator": coordinator,
         "veeam_client": veeam_client,
@@ -756,3 +804,12 @@ async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Clean up after a removed config entry.
+
+    Deleted here rather than on unload, which also runs on every reload — the warning would
+    otherwise disappear and come back on each restart.
+    """
+    ir.async_delete_issue(hass, DOMAIN, _license_issue_id(entry))
