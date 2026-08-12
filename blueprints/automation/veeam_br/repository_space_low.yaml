@@ -1,0 +1,98 @@
+blueprint:
+  name: Veeam repository running out of space
+  description: >-
+    Notify when a Veeam backup repository crosses a used-space threshold, and again when it
+    recovers.
+
+    Pick the **Used Percentage** sensors of the repositories you want to watch. Scale-out
+    repositories report per-extent, so watch the extents rather than the SOBR.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/repository_space_low.yaml
+  author: Cenvora
+  input:
+    repository_sensors:
+      name: Repository Used Percentage sensors
+      description: One or more Veeam repository "Used Percentage" sensors.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: veeam_br
+              domain: sensor
+    threshold:
+      name: Used space threshold
+      description: Notify once a repository is at least this full.
+      default: 85
+      selector:
+        number:
+          min: 50
+          max: 99
+          unit_of_measurement: "%"
+          mode: slider
+    sustained_for:
+      name: Sustained for
+      description: >-
+        How long the repository must stay above the threshold before notifying. Useful because
+        a repository can briefly spike while a job is writing.
+      default:
+        minutes: 15
+      selector:
+        duration:
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run when the threshold is crossed. Available variables: `repository_name`,
+        `used_percent`, `threshold`, `repository_entity_id`, and ready-made `title` and
+        `message`.
+      selector:
+        action:
+    recovery_action:
+      name: Recovery action
+      description: >-
+        Optional. What to run when the repository drops back below the threshold. The same
+        variables are available.
+      default: []
+      selector:
+        action:
+
+mode: queued
+max: 25
+
+triggers:
+  - trigger: numeric_state
+    entity_id: !input repository_sensors
+    above: !input threshold
+    for: !input sustained_for
+    id: above
+  - trigger: numeric_state
+    entity_id: !input repository_sensors
+    below: !input threshold
+    id: recovered
+
+variables:
+  threshold: !input threshold
+  repository_entity_id: "{{ trigger.entity_id }}"
+  used_percent: "{{ trigger.to_state.state }}"
+  # Each repository is its own device, so the device name is the repository name
+  repository_name: >-
+    {{ device_attr(trigger.entity_id, 'name_by_user')
+       or device_attr(trigger.entity_id, 'name')
+       or trigger.to_state.name | replace(' Used Percentage', '') }}
+  title: >-
+    {{ 'Veeam repository low on space: ' ~ repository_name
+       if trigger.id == 'above'
+       else 'Veeam repository space recovered: ' ~ repository_name }}
+  message: >-
+    {{ repository_name }} is {{ used_percent }}% full
+    {{ '(threshold ' ~ threshold ~ '%)' if trigger.id == 'above' else '— back under ' ~ threshold ~ '%' }}.
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: above
+        sequence: !input notification_action
+      - conditions:
+          - condition: trigger
+            id: recovered
+        sequence: !input recovery_action

@@ -26,7 +26,7 @@ This project is an independent, open source project. It is not affiliated with, 
 
 ## Requirements
 
-- Home Assistant 2023.1.0 or newer
+- Home Assistant 2026.1 or newer
 - Veeam Backup & Replication server with the REST API enabled, on a supported license
   (see [Licensing](#licensing))
 
@@ -155,7 +155,8 @@ The integration creates devices for each monitored object (jobs, repositories, s
 Each backup job creates a device with the following sensors:
 
 - **Status Sensor**: `sensor.<job_name>_status`
-  - State: Current job status (`success`, `running`, `failed`, `warning`, `unknown`)
+  - State: What the job is doing (`Running`, `Inactive`, `Disabled`) — the pass/fail
+    outcome of the last run is on the **Last Result** sensor, not here
 - **Type Sensor**: `sensor.<job_name>_type`
   - State: Type of backup job
 - **Last Run Sensor**: `sensor.<job_name>_last_run`
@@ -228,6 +229,67 @@ automation:
             Secondary node lag was
             {{ states('sensor.vbr_ha_example_com_secondary_node_lag') }} MB.
 ```
+
+## Automation Blueprints
+
+Ready-made automations for the entities this integration creates. Each one asks you to pick
+the entities to watch and what to do about it — a notification, a script, anything Home
+Assistant can run — so they work with whatever notifier you already use.
+
+Click **Import blueprint**, then create automations from it under
+**Settings → Automations & scenes → Blueprints**.
+
+> [!NOTE]
+> Blueprints are not installed by HACS — Home Assistant has no mechanism for an integration to
+> ship them, and HACS has no blueprint category. The import links below fetch them from this
+> repository directly.
+
+### Backup job failed
+
+Notifies when a job's **Last Result** turns Failed (optionally Warning too).
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fjob_failed.yaml)
+
+<sub>Source: [`job_failed.yaml`](blueprints/automation/veeam_br/job_failed.yaml)</sub>
+
+### Repository running out of space
+
+Fires when a repository crosses a used-space threshold, with an optional recovery notification.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Frepository_space_low.yaml)
+
+<sub>Source: [`repository_space_low.yaml`](blueprints/automation/veeam_br/repository_space_low.yaml)</sub>
+
+### HA cluster failover or outage
+
+Fires when a High Availability cluster starts failing over or stops reporting itself online.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fha_cluster_failover.yaml)
+
+<sub>Source: [`ha_cluster_failover.yaml`](blueprints/automation/veeam_br/ha_cluster_failover.yaml)</sub>
+
+### License expiring soon
+
+Daily reminder once a license or support contract is within N days of expiring.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Flicense_expiring.yaml)
+
+<sub>Source: [`license_expiring.yaml`](blueprints/automation/veeam_br/license_expiring.yaml)</sub>
+
+### Daily backup summary
+
+One digest a day: how many jobs succeeded, warned or failed, and which need attention.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fdaily_backup_summary.yaml)
+
+<sub>Source: [`daily_backup_summary.yaml`](blueprints/automation/veeam_br/daily_backup_summary.yaml)</sub>
+
+### A note on which sensor to pick
+
+For job automations, use the **Last Result** sensor, not **Status**. Status reports what the
+job is doing (`Running`, `Inactive`, `Disabled`); the pass/fail outcome of the last run is on
+Last Result (`Success`, `Warning`, `Failed`, `None`). An automation keyed on Status would never
+see a failure.
 
 ## Example Automations
 

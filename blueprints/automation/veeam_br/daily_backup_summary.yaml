@@ -1,0 +1,94 @@
+blueprint:
+  name: Veeam daily backup summary
+  description: >-
+    Send a once-a-day summary of your Veeam backup jobs: how many succeeded, warned or failed,
+    and which ones need attention.
+
+    Pick the **Last Result** sensors of the jobs to include. Optionally stay quiet on days when
+    everything succeeded, so the summary only arrives when it says something.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/daily_backup_summary.yaml
+  author: Cenvora
+  input:
+    job_result_sensors:
+      name: Job Last Result sensors
+      description: The jobs to include in the summary.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: veeam_br
+              domain: sensor
+    report_time:
+      name: Send at
+      default: "08:00:00"
+      selector:
+        time:
+    only_when_problems:
+      name: Only send when something needs attention
+      description: Skip the summary on days when every job succeeded.
+      default: false
+      selector:
+        boolean:
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run. Available variables: `total`, `succeeded`, `warned`, `failed`,
+        `unknown_count`, `problem_jobs` (list of `{name, result}`), and ready-made `title` and
+        `message`.
+      selector:
+        action:
+
+mode: single
+
+triggers:
+  - trigger: time
+    at: !input report_time
+
+variables:
+  job_result_sensors: !input job_result_sensors
+  only_when_problems: !input only_when_problems
+  # ESessionResult is Failed / Warning / Success / None, compared lower-cased for safety
+  results: >-
+    {{ job_result_sensors | map('states') | map('lower') | list }}
+  total: "{{ job_result_sensors | count }}"
+  succeeded: "{{ results | select('eq', 'success') | list | count }}"
+  warned: "{{ results | select('eq', 'warning') | list | count }}"
+  failed: "{{ results | select('eq', 'failed') | list | count }}"
+  unknown_count: >-
+    {{ results | reject('in', ['success', 'warning', 'failed']) | list | count }}
+  problem_jobs: >-
+    {% set ns = namespace(items=[]) %}
+    {% for entity_id in job_result_sensors %}
+      {% set result = states(entity_id) %}
+      {% if result | lower in ['failed', 'warning'] %}
+        {% set ns.items = ns.items + [{
+             'name': device_attr(entity_id, 'name_by_user')
+                     or device_attr(entity_id, 'name')
+                     or entity_id,
+             'result': result,
+           }] %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.items }}
+  title: >-
+    {{ 'Veeam: all ' ~ total ~ ' jobs succeeded' if failed | int == 0 and warned | int == 0
+       else 'Veeam: ' ~ failed ~ ' failed, ' ~ warned ~ ' with warnings' }}
+  message: >-
+    {{ succeeded }} of {{ total }} jobs succeeded.
+    {%- if problem_jobs | count > 0 %}
+    Needs attention:
+    {% for job in problem_jobs %}
+    - {{ job.name }}: {{ job.result }}
+    {%- endfor %}
+    {%- endif %}
+    {%- if unknown_count | int > 0 %}
+    {{ unknown_count }} job(s) reported no result yet.
+    {%- endif %}
+
+conditions:
+  - condition: template
+    value_template: >-
+      {{ not only_when_problems or failed | int > 0 or warned | int > 0 }}
+
+actions: !input notification_action
