@@ -126,6 +126,55 @@ def _parse_ha_cluster(cluster, get_enum_value, get_uuid_value, serialize_value) 
     return parsed
 
 
+def _is_unset(value) -> bool:
+    """Whether a generated model returned its "absent" sentinel."""
+    return value is None or getattr(type(value), "__name__", "") == "Unset"
+
+
+# The per-package summaries, in the order to trust them. Capacity carries no dates.
+LICENSE_SUMMARIES = (
+    "instance_license_summary",
+    "socket_license_summary",
+    "capacity_license_summary",
+)
+
+
+def _license_datetime(license_data, field: str):
+    """Read a license date, wherever this API revision keeps it.
+
+    1.2-rev1 exposes expirationDate and supportExpirationDate on the license itself. In
+    1.3-rev* those fields are gone from the top level and live only inside the per-package
+    summary (instanceLicenseSummary, socketLicenseSummary), so reading the top level alone
+    leaves the sensor unknown on any 13.x server.
+    """
+    direct = getattr(license_data, field, None)
+    if not _is_unset(direct):
+        return direct
+
+    for summary_name in LICENSE_SUMMARIES:
+        summary = getattr(license_data, summary_name, None)
+        if _is_unset(summary):
+            continue
+        value = getattr(summary, field, None)
+        if not _is_unset(value):
+            return value
+
+    return None
+
+
+def _license_text(license_data, field: str, default: str = "Unknown") -> str:
+    """Read a license string, treating blank as absent.
+
+    A license with no support contract reports supportId as "", which would otherwise show as
+    an empty sensor rather than as unknown.
+    """
+    value = getattr(license_data, field, None)
+    if _is_unset(value):
+        return default
+    text = str(value).strip()
+    return text or default
+
+
 def _license_issue_id(entry: ConfigEntry) -> str:
     """Repair issue ID for one config entry's license warning."""
     return f"unsupported_license_{entry.entry_id}"
@@ -413,32 +462,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             return attr.value
                         return str(attr)
 
-                    # Helper function to safely get datetime from object attribute
-                    def get_license_datetime_attr(obj, attr_name):
-                        """Extract datetime value from object attribute, handling UNSET."""
-                        attr = getattr(obj, attr_name, None)
-                        if attr is None:
-                            return None
-                        # Check if it's UNSET
-                        if hasattr(attr, "__class__") and attr.__class__.__name__ == "Unset":
-                            return None
-                        return attr
-
                     license_info = {
                         "status": get_license_enum_attr(license_data, "status"),
                         "edition": get_license_enum_attr(license_data, "edition"),
                         "type": get_license_enum_attr(
                             license_data, "type_"
                         ),  # Note: type_ with underscore
-                        "expiration_date": get_license_datetime_attr(
-                            license_data, "expiration_date"
-                        ),
-                        "support_expiration_date": get_license_datetime_attr(
+                        "expiration_date": _license_datetime(license_data, "expiration_date"),
+                        "support_expiration_date": _license_datetime(
                             license_data, "support_expiration_date"
                         ),
-                        "support_id": getattr(license_data, "support_id", "Unknown"),
+                        "support_id": _license_text(license_data, "support_id"),
                         "auto_update_enabled": getattr(license_data, "auto_update_enabled", False),
-                        "licensed_to": getattr(license_data, "licensed_to", "Unknown"),
+                        "licensed_to": _license_text(license_data, "licensed_to"),
                         "cloud_connect": get_license_enum_attr(license_data, "cloud_connect"),
                         "free_agent_instance_consumption_enabled": getattr(
                             license_data, "free_agent_instance_consumption_enabled", False
