@@ -5,9 +5,9 @@ fixes the reported failure rather than just that the code is present. sdk_patche
 no Home Assistant modules, so it can be loaded directly.
 """
 
+from datetime import datetime
 import importlib
 import importlib.util
-from datetime import datetime
 from pathlib import Path
 from types import ModuleType
 

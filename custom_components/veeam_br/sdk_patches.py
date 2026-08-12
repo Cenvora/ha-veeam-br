@@ -24,8 +24,8 @@ behavior for every other integration in the process.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
+import logging
 from types import ModuleType
 from typing import Any
 
