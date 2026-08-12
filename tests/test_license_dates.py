@@ -197,3 +197,163 @@ def test_the_schema_change_is_documented():
     docstring = source[source.index("def _license_datetime") :][:900]
 
     assert "1.2-rev1" in docstring and "1.3-rev" in docstring
+
+
+# ---------------------------------------------------------------------------
+# Instance licensing figures
+#
+# Fixtures mirror a real 13.1 NFR response: 20 licensed, 11 used, a per-type breakdown, and a
+# workload list naming each protected object.
+# ---------------------------------------------------------------------------
+
+USAGE_HELPERS = ("_is_unset", "_license_text", "_number_or_none", "_license_instance_usage")
+
+
+def _lift(names, wanted):
+    """Execute a subset of __init__.py's module-level functions and return one of them."""
+    tree = ast.parse(INIT_PATH.read_text(encoding="utf-8"))
+    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+    assert len(nodes) == len(names), f"missing helpers, found {[n.name for n in nodes]}"
+
+    namespace = {}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(INIT_PATH), "exec"), namespace)
+    return namespace[wanted]
+
+
+@pytest.fixture(name="usage", scope="module")
+def usage_fixture():
+    return _lift(USAGE_HELPERS, "_license_instance_usage")
+
+
+def instance_license(**overrides):
+    summary = Summary(
+        package="Suite",
+        licensed_instances_number=20,
+        used_instances_number=11,
+        new_instances_number=0,
+        rental_instances_number=0,
+        expiration_date=EXPIRES,
+        objects=[
+            Summary(type_="Virtual Machines", count=10, multiplier=1, used_instances_number=10),
+            Summary(type_="Servers", count=1, multiplier=1, used_instances_number=1),
+            Summary(type_="File Shares (500 GB)", count=0, multiplier=1, used_instances_number=0),
+        ],
+        workload=[Summary(name=f"vm-{n}") for n in range(13)],
+    )
+    summary.__dict__.update(overrides)
+    return License(instance_license_summary=summary)
+
+
+def test_reads_the_licensed_and_used_counts(usage):
+    figures = usage(instance_license())
+
+    assert figures["instances_licensed"] == 20
+    assert figures["instances_used"] == 11
+    assert figures["package"] == "Suite"
+
+
+def test_computes_the_used_percentage(usage):
+    assert usage(instance_license())["instances_used_percent"] == 55.0
+
+
+def test_percentage_is_omitted_when_the_licence_count_is_zero(usage):
+    """An unlimited or malformed licence must not divide by zero."""
+    figures = usage(instance_license(licensed_instances_number=0))
+
+    assert "instances_used_percent" not in figures
+    assert figures["instances_licensed"] == 0
+
+
+def test_percentage_is_omitted_when_usage_is_unknown(usage):
+    figures = usage(instance_license(used_instances_number=UNSET))
+
+    assert figures["instances_used"] is None
+    assert "instances_used_percent" not in figures
+
+
+def test_keeps_the_per_type_breakdown(usage):
+    objects = usage(instance_license())["instance_objects"]
+
+    assert {o["type"] for o in objects} == {
+        "Virtual Machines",
+        "Servers",
+        "File Shares (500 GB)",
+    }
+    assert next(o for o in objects if o["type"] == "Virtual Machines")["used"] == 10
+
+
+def test_counts_workloads_without_listing_them(usage):
+    """A large estate has thousands of workloads, and attributes are recorded every update."""
+    figures = usage(instance_license())
+
+    assert figures["instance_workload_count"] == 13
+    assert "workload" not in figures, "the full list must not reach state attributes"
+
+
+def test_a_socket_or_capacity_licence_reports_no_instance_figures(usage):
+    assert usage(License(socket_license_summary=Summary(licensed_sockets_number=4))) == {}
+    assert usage(License()) == {}
+
+
+def test_missing_optional_fields_do_not_break_parsing(usage):
+    figures = usage(License(instance_license_summary=Summary(licensed_instances_number=5)))
+
+    assert figures["instances_licensed"] == 5
+    assert figures["instances_used"] is None
+    assert "instance_objects" not in figures
+    assert "instance_workload_count" not in figures
+
+
+def test_usage_sensors_are_only_created_for_instance_licences():
+    """A socket licence would otherwise get instance sensors that read unknown forever."""
+    sensor_source = (INIT_PATH.parent / "sensor.py").read_text(encoding="utf-8")
+
+    assert 'get("instances_licensed") is not None' in sensor_source
+    assert 'get("instances_used_percent") is not None' in sensor_source
+
+
+# ---------------------------------------------------------------------------
+# "No HA cluster" versus a real cluster failure
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(name="cluster_reason", scope="module")
+def cluster_reason_fixture():
+    return _lift(("_is_unset", "_license_text", "_cluster_absent_reason"), "_cluster_absent_reason")
+
+
+class ApiError:
+    """Shaped like the generated Error model, whose extras carry the HTTP status."""
+
+    def __init__(self, message, status=None, error_code="UnknownError"):
+        self.message = message
+        self.error_code = error_code
+        self.additional_properties = {"status": status} if status else {}
+
+
+NOT_CONFIGURED = (
+    "High Availability cluster is not configured. Configure a cluster before using this operation."
+)
+
+
+def test_a_400_not_configured_is_normal(cluster_reason):
+    """The real response from an unclustered server — it must not warn on every poll."""
+    unclustered, detail = cluster_reason(ApiError(NOT_CONFIGURED, status=400))
+
+    assert unclustered is True
+    assert "not configured" in detail
+
+
+def test_not_configured_without_a_status_is_still_recognised(cluster_reason):
+    unclustered, _ = cluster_reason(ApiError(NOT_CONFIGURED))
+
+    assert unclustered is True
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_other_errors_are_reported_not_hidden(cluster_reason, status):
+    """Reading an auth or server failure as "no cluster" would bury it in debug."""
+    unclustered, detail = cluster_reason(ApiError("Unauthorized", status=status))
+
+    assert unclustered is False
+    assert str(status) in detail

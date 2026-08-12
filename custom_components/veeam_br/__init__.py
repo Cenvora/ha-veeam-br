@@ -175,6 +175,76 @@ def _license_text(license_data, field: str, default: str = "Unknown") -> str:
     return text or default
 
 
+def _number_or_none(obj, name: str):
+    """Read a numeric field, mapping UNSET and non-numbers to None."""
+    value = getattr(obj, name, None)
+    if _is_unset(value) or isinstance(value, bool):
+        return None
+    return value if isinstance(value, (int, float)) else None
+
+
+def _license_instance_usage(license_data) -> dict:
+    """Instance-based licensing figures, or an empty dict for other license types.
+
+    Socket and capacity licenses count different units, so instance sensors would be
+    meaningless for them and are not created at all.
+    """
+    summary = getattr(license_data, "instance_license_summary", None)
+    if _is_unset(summary):
+        return {}
+
+    licensed = _number_or_none(summary, "licensed_instances_number")
+    used = _number_or_none(summary, "used_instances_number")
+
+    usage = {
+        "package": _license_text(summary, "package", default=None),
+        "instances_licensed": licensed,
+        "instances_used": used,
+        "instances_new": _number_or_none(summary, "new_instances_number"),
+        "instances_rental": _number_or_none(summary, "rental_instances_number"),
+    }
+
+    if licensed and used is not None:
+        usage["instances_used_percent"] = round(used / licensed * 100, 1)
+
+    # The per-type breakdown is small and stable. The full workload list is not — a large
+    # estate has thousands of entries, which have no business in a state attribute.
+    objects = getattr(summary, "objects", None)
+    if not _is_unset(objects):
+        usage["instance_objects"] = [
+            {
+                "type": _license_text(item, "type_", default="Unknown"),
+                "count": _number_or_none(item, "count"),
+                "used": _number_or_none(item, "used_instances_number"),
+            }
+            for item in objects
+        ]
+
+    workload = getattr(summary, "workload", None)
+    if not _is_unset(workload):
+        usage["instance_workload_count"] = len(workload)
+
+    return usage
+
+
+def _cluster_absent_reason(result) -> tuple[bool, str]:
+    """Whether an HA cluster response means "not clustered", and what to say about it.
+
+    A server with no cluster answers 400 with an Error saying exactly that, which is the
+    normal case and not worth a warning. But 401, 403 and 500 come back as an Error too, and
+    treating those as "no cluster" would hide a real failure behind a debug line.
+    """
+    message = _license_text(result, "message", default="")
+    extras = getattr(result, "additional_properties", {}) or {}
+    status_code = extras.get("status")
+
+    if status_code == 400 or "not configured" in message.lower():
+        return True, message or "no cluster configured"
+
+    detail = f"HTTP {status_code}: {message}" if status_code else message
+    return False, detail or type(result).__name__
+
+
 def _license_issue_id(entry: ConfigEntry) -> str:
     """Repair issue ID for one config entry's license warning."""
     return f"unsupported_license_{entry.entry_id}"
@@ -479,6 +549,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "free_agent_instance_consumption_enabled": getattr(
                             license_data, "free_agent_instance_consumption_enabled", False
                         ),
+                        **_license_instance_usage(license_data),
                     }
             except (AttributeError, KeyError, TypeError) as err:
                 _LOGGER.warning("Failed to parse license info: %s", err)
@@ -764,12 +835,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     )
                     cluster = await veeam_client.call(ha_api.get_high_availability_cluster)
 
-                    if cluster is None or not hasattr(cluster, "cluster_endpoint"):
-                        # None, or an Error model: this server is not clustered
-                        _LOGGER.debug(
-                            "No HA cluster reported by this server (%s)",
-                            type(cluster).__name__,
-                        )
+                    if cluster is None:
+                        _LOGGER.debug("HA cluster endpoint returned no data")
+                    elif not hasattr(cluster, "cluster_endpoint"):
+                        # An Error model. "Not configured" is the normal answer from an
+                        # unclustered server; anything else is a failure worth reporting.
+                        unclustered, detail = _cluster_absent_reason(cluster)
+                        if unclustered:
+                            _LOGGER.debug("No HA cluster on this server: %s", detail)
+                        else:
+                            _LOGGER.warning("Could not read the HA cluster: %s", detail)
                     else:
                         ha_cluster = _parse_ha_cluster(
                             cluster, get_enum_value, get_uuid_value, serialize_value
