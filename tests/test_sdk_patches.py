@@ -1,4 +1,4 @@
-"""Tests for the null-timestamp model patch (issue #83).
+"""Tests for the null-tolerance model patches (issues #82 and #83).
 
 These run against the real installed veeam-br models, so they verify the patch actually
 fixes the reported failure rather than just that the code is present. sdk_patches imports
@@ -86,7 +86,7 @@ def test_null_timestamp_fails_before_patch_and_parses_after(package, null_field)
     with pytest.raises(TypeError, match="object of type 'NoneType' has no len"):
         module.JobStateModel.from_dict(payload)
 
-    assert sdk_patches.patch_null_timestamps(module, unset) is True
+    assert sdk_patches.patch_null_values(module, unset) is True
 
     job = module.JobStateModel.from_dict(payload)
     field = "next_run" if null_field == "nextRun" else "last_run"
@@ -116,7 +116,7 @@ def test_whole_response_survives_one_unscheduled_job(package):
 
     # JobStatesResult delegates to JobStateModel, so patch the module it actually uses
     results_module = importlib.import_module(f"{package}.models.job_states_result")
-    sdk_patches.patch_null_timestamps(
+    sdk_patches.patch_null_values(
         importlib.import_module(f"{package}.models.job_state_model"), unset
     )
 
@@ -139,7 +139,7 @@ def test_valid_timestamps_are_untouched():
 
     module = _fresh_model_module(package, "job_state_model")
     before = module.JobStateModel.from_dict(job_payload(package, module))
-    sdk_patches.patch_null_timestamps(module, unset)
+    sdk_patches.patch_null_values(module, unset)
     after = module.JobStateModel.from_dict(job_payload(package, module))
 
     assert before.last_run == after.last_run
@@ -153,61 +153,150 @@ def test_patch_is_idempotent():
     unset = importlib.import_module(f"{package}.types").UNSET
 
     module = _fresh_model_module(package, "job_state_model")
-    assert sdk_patches.patch_null_timestamps(module, unset) is True
+    assert sdk_patches.patch_null_values(module, unset) is True
     patched_isoparse = module.isoparse
 
-    assert sdk_patches.patch_null_timestamps(module, unset) is False
+    assert sdk_patches.patch_null_values(module, unset) is False
     assert module.isoparse is patched_isoparse
 
 
-def test_module_without_isoparse_is_skipped():
-    """Patching a module that parses no timestamps should report no work done."""
+def test_module_with_nothing_to_patch_is_skipped():
+    """A module that parses nothing should report no work done."""
     sdk_patches = _load_sdk_patches()
 
-    assert sdk_patches.patch_null_timestamps(ModuleType("no_timestamps"), object()) is False
+    assert sdk_patches.patch_null_values(ModuleType("nothing_to_patch"), object()) is False
 
 
-def test_patch_models_reports_count_and_skips_missing():
-    """patch_models should patch what exists and ignore what does not."""
+# ---------------------------------------------------------------------------
+# Null UUID — VBR sends "hostId": null for repositories with no host (#82)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("package", sorted(set(veeam_br_versions.values())))
+def test_null_uuid_fails_before_patch_and_parses_after(package):
+    """The repositories error from issue #82, on the model that parses `hostId`.
+
+    Asserted at the module's UUID binding rather than through a full RepositoryStateModel
+    payload, since which fields that model requires varies by API version.
+    """
+    sdk_patches = _load_sdk_patches()
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "repository_state_model")
+    assert "host_id" in {
+        field.name for field in module.RepositoryStateModel.__attrs_attrs__
+    }, "this model should be the one carrying the optional hostId"
+
+    with pytest.raises(TypeError, match="hex, bytes, bytes_le, fields, or int"):
+        module.UUID(None)
+
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    assert module.UUID(None) is unset, "a null UUID should read as the absent sentinel"
+    real = "6f1f0f8a-0000-4000-8000-000000000001"
+    assert str(module.UUID(real)) == real, "real UUIDs must still parse"
+
+
+# ---------------------------------------------------------------------------
+# Null nested object — VBR sends "instanceLicenseSummary": null (#82)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("package", sorted(set(veeam_br_versions.values())))
+def test_null_nested_object_fails_before_patch_and_parses_after(package):
+    """The license error from issue #82: from_dict starts with dict(src_dict)."""
+    sdk_patches = _load_sdk_patches()
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "instance_license_summary_model")
+    model = module.InstanceLicenseSummaryModel
+
+    with pytest.raises(TypeError, match="'NoneType' object is not iterable"):
+        model.from_dict(None)
+
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    assert model.from_dict(None) is unset, "a null nested object should read as absent"
+
+
+def test_required_nullable_fields_still_parse():
+    """Guard against 'just strip the nulls', which would break these.
+
+    SessionProgressType0 (nested in JobStateModel) has four fields that are required and
+    legitimately nullable, so a null is valid input there and dropping the key would raise
+    KeyError. The patches must leave that working.
+    """
     sdk_patches = _load_sdk_patches()
     package = sorted(set(veeam_br_versions.values()))[0]
     unset = importlib.import_module(f"{package}.types").UNSET
 
-    loaded = {}
+    module = _fresh_model_module(package, "session_progress_type_0")
+    bottleneck = list(
+        importlib.import_module(
+            f"{package}.models.e_session_bottleneck_type"
+        ).ESessionBottleneckType
+    )[0]
+    progress = module.SessionProgressType0(
+        duration="00:10:00",
+        processing_rate=None,
+        bottleneck=bottleneck,
+        processed_size=None,
+        read_size=None,
+        transferred_size=None,
+    )
+    payload = progress.to_dict()
+    assert payload["processingRate"] is None, "the fixture should carry the valid nulls"
 
-    def import_module(name):
-        if name == "definitely_not_a_model":
-            raise ImportError(name)
-        module = _fresh_model_module(package, name)
-        loaded[name] = module
-        return module
+    before = module.SessionProgressType0.from_dict(dict(payload))
+    assert sdk_patches.patch_null_values(module, unset) is True
+    after = module.SessionProgressType0.from_dict(dict(payload))
 
-    patched = sdk_patches.patch_models(import_module, unset)
-
-    assert patched == len(loaded), "every importable listed module should be patched"
-    assert patched > 0
-    assert all(getattr(m, sdk_patches.PATCH_MARKER, False) for m in loaded.values())
-
-    # A module that cannot be imported must not fail the whole run
-    sdk_patches.TIMESTAMP_MODEL_MODULES = ("definitely_not_a_model",)
-    assert sdk_patches.patch_models(import_module, unset) == 0
+    for field in ("duration", "processing_rate", "processed_size", "read_size"):
+        assert getattr(after, field) == getattr(before, field), f"{field} changed"
+    assert after.processing_rate is None, "a required nullable field must stay None"
 
 
-def test_listed_modules_exist_and_parse_timestamps():
-    """Every listed module should exist in some version and actually use isoparse.
+# ---------------------------------------------------------------------------
+# patch_models over a whole API version
+# ---------------------------------------------------------------------------
 
-    A typo would otherwise sit here silently doing nothing.
-    """
+
+@pytest.mark.parametrize("package", sorted(set(veeam_br_versions.values())))
+def test_patch_models_covers_the_whole_models_package(package):
+    """Importing the package imports every model, so all of them get patched."""
+    sdk_patches = _load_sdk_patches()
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    models_package = f"{package}.models"
+    importlib.import_module(models_package)
+    modules = {
+        name: module
+        for name, module in list(__import__("sys").modules.items())
+        if name.startswith(f"{models_package}.")
+    }
+
+    patched = sdk_patches.patch_models(models_package, unset, modules)
+
+    assert patched > 100, f"expected the full models package, patched only {patched}"
+
+    # Re-running is idempotent
+    assert sdk_patches.patch_models(models_package, unset, modules) == 0
+
+
+def test_patch_models_ignores_other_packages_and_none_entries():
+    """Only the requested version's models are touched, and stale None entries are safe."""
     sdk_patches = _load_sdk_patches()
 
-    for name in sdk_patches.TIMESTAMP_MODEL_MODULES:
-        found = []
-        for package in sorted(set(veeam_br_versions.values())):
-            spec = importlib.util.find_spec(f"{package}.models.{name}")
-            if spec is None:
-                continue
-            module = importlib.import_module(f"{package}.models.{name}")
-            found.append(hasattr(module, "isoparse"))
+    other = ModuleType("some.other.models.thing")
+    other.isoparse = lambda value: value
+    modules = {
+        "wanted.models.a": ModuleType("wanted.models.a"),
+        "some.other.models.thing": other,
+        "wanted.models.stale": None,
+    }
+    modules["wanted.models.a"].isoparse = lambda value: value
 
-        assert found, f"{name} exists in no installed API version"
-        assert any(found), f"{name} never parses a timestamp, so patching it does nothing"
+    patched = sdk_patches.patch_models("wanted.models", object(), modules)
+
+    assert patched == 1
+    assert not getattr(other, sdk_patches.PATCH_MARKER, False), "other packages untouched"
