@@ -615,10 +615,11 @@ def test_api_1_3_rev2_supported():
     ), "DEFAULT_API_VERSION must be a known API version"
 
 
-def test_manifest_requires_veeam_br_with_rev2():
-    """Test that the manifest requires a veeam-br release that ships v1_3_rev2."""
+def test_manifest_requires_a_recent_enough_veeam_br():
+    """Test that the manifest's veeam-br floor covers what the integration relies on."""
     import json
     from pathlib import Path
+    import re
 
     manifest_path = (
         Path(__file__).parent.parent / "custom_components" / "veeam_br" / "manifest.json"
@@ -629,10 +630,20 @@ def test_manifest_requires_veeam_br_with_rev2():
 
     requirement = next(r for r in manifest["requirements"] if r.startswith("veeam-br"))
 
-    # v1_3_rev2 first shipped in veeam-br 0.3.0
-    assert (
-        ">=0.3.0" in requirement
-    ), f"veeam-br requirement should be >=0.3.0 for 1.3-rev2 support, got {requirement}"
+    # Floors we depend on, newest first:
+    #   0.3.1 — VeeamClient recovers from a refused token refresh instead of leaving a
+    #           dead session behind (issue #82)
+    #   0.3.0 — first release shipping the v1_3_rev2 SDK
+    minimum = (0, 3, 1)
+
+    match = re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", requirement)
+    assert match, f"veeam-br requirement should pin a minimum version, got {requirement}"
+
+    floor = tuple(int(part) for part in match.groups())
+    assert floor >= minimum, (
+        f"veeam-br requirement floor {'.'.join(map(str, floor))} is below the "
+        f"{'.'.join(map(str, minimum))} that this integration relies on"
+    )
 
 
 def test_api_versions_discovery_is_sorted(tmp_path, monkeypatch):
