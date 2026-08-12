@@ -256,6 +256,8 @@ DEVICE_KINDS = {
     "job_": "jobs",
     "repository_": "repositories",
     "sobr_": "sobrs",
+    "proxy_": "proxies",
+    "wan_": "wan_accelerators",
 }
 SINGLETON_KINDS = {
     "server_": "server_info",
@@ -454,6 +456,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "repositories.get_all_repositories",
         "repositories.get_all_repositories_states",
         "repositories.get_all_scale_out_repositories",
+        "proxies.get_all_proxies_states",
+        "wan_accelerators.get_all_wan_accelerators",
     ]
     if ha_cluster_supported:
         api_endpoints.append("high_availability_ha_cluster.get_high_availability_cluster")
@@ -918,6 +922,132 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             _LOGGER.debug("Total SOBRs added to coordinator data: %d", len(sobr_list))
 
+            # Fetch backup proxies. The states endpoint carries the configuration this needs
+            # as well as online/disabled/out-of-date, so one call covers both.
+            proxies_list = []
+            try:
+                proxies_api = await asyncio.to_thread(veeam_client.api, "proxies")
+                proxies_result = await veeam_client.call(proxies_api.get_all_proxies_states)
+
+                for proxy in getattr(proxies_result, "data", None) or []:
+                    try:
+                        proxy_id = get_uuid_value(proxy.id)
+                        if not proxy_id:
+                            _LOGGER.warning(
+                                "Skipping proxy %s: no usable ID",
+                                getattr(proxy, "name", "Unknown"),
+                            )
+                            continue
+
+                        proxies_list.append(
+                            {
+                                "id": proxy_id,
+                                "name": proxy.name or "Unknown",
+                                "description": getattr(proxy, "description", "") or "",
+                                "type": humanize(get_enum_value(proxy.type_), "Unknown"),
+                                "type_raw": get_enum_value(proxy.type_),
+                                "host_id": get_uuid_value(getattr(proxy, "host_id", None)),
+                                "host_name": getattr(proxy, "host_name", None) or None,
+                                "is_online": _bool_or_none(proxy, "is_online"),
+                                "is_disabled": _bool_or_none(proxy, "is_disabled"),
+                                "is_out_of_date": _bool_or_none(proxy, "is_out_of_date"),
+                            }
+                        )
+                    except (ValueError, KeyError, AttributeError, TypeError) as err:
+                        _LOGGER.warning(
+                            "Failed to parse proxy %s: %s",
+                            getattr(proxy, "name", "Unknown"),
+                            err,
+                        )
+                        continue
+            except (AttributeError, KeyError, TypeError, ValueError) as err:
+                _LOGGER.warning("Failed to parse proxies: %s", err)
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch proxies: %s", err)
+
+            _LOGGER.debug("Total proxies added to coordinator data: %d", len(proxies_list))
+
+            # Fetch WAN accelerators. There is no states endpoint for these, so this is
+            # configuration only: cache location and size, and the traffic settings.
+            wan_accelerators_list = []
+            try:
+                wan_api = await asyncio.to_thread(veeam_client.api, "wan_accelerators")
+                wan_result = await veeam_client.call(wan_api.get_all_wan_accelerators)
+
+                for accelerator in getattr(wan_result, "data", None) or []:
+                    try:
+                        wan_id = get_uuid_value(getattr(accelerator, "id", None))
+                        if not wan_id:
+                            _LOGGER.warning(
+                                "Skipping WAN accelerator %s: no usable ID",
+                                getattr(accelerator, "name", "Unknown"),
+                            )
+                            continue
+
+                        server = getattr(accelerator, "server", None)
+                        cache = getattr(accelerator, "cache", None)
+                        has_server = not _is_unset(server)
+                        has_cache = not _is_unset(cache)
+
+                        wan_accelerators_list.append(
+                            {
+                                "id": wan_id,
+                                "name": getattr(accelerator, "name", None) or "Unknown",
+                                "host_id": (
+                                    get_uuid_value(getattr(server, "host_id", None))
+                                    if has_server
+                                    else None
+                                ),
+                                "description": (
+                                    _license_text(server, "description", default="")
+                                    if has_server
+                                    else ""
+                                ),
+                                "traffic_port": (
+                                    _number_or_none(server, "traffic_port") if has_server else None
+                                ),
+                                "streams_count": (
+                                    _number_or_none(server, "streams_count") if has_server else None
+                                ),
+                                "high_bandwidth_mode": (
+                                    _bool_or_none(server, "high_bandwidth_mode_enabled")
+                                    if has_server
+                                    else None
+                                ),
+                                "cache_folder": (
+                                    _license_text(cache, "cache_folder", default=None)
+                                    if has_cache
+                                    else None
+                                ),
+                                "cache_size": (
+                                    _number_or_none(cache, "cache_size") if has_cache else None
+                                ),
+                                "cache_size_unit": (
+                                    get_enum_value(
+                                        getattr(cache, "cache_size_unit", None), "Unknown"
+                                    )
+                                    if has_cache
+                                    else None
+                                ),
+                            }
+                        )
+                    except (ValueError, KeyError, AttributeError, TypeError) as err:
+                        _LOGGER.warning(
+                            "Failed to parse WAN accelerator %s: %s",
+                            getattr(accelerator, "name", "Unknown"),
+                            err,
+                        )
+                        continue
+            except (AttributeError, KeyError, TypeError, ValueError) as err:
+                _LOGGER.warning("Failed to parse WAN accelerators: %s", err)
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch WAN accelerators: %s", err)
+
+            _LOGGER.debug(
+                "Total WAN accelerators added to coordinator data: %d",
+                len(wan_accelerators_list),
+            )
+
             # Fetch High Availability cluster configuration and state. Only reachable on
             # 1.3-rev2 and newer, and only answered by a server that is actually clustered —
             # an unclustered server is the common case, not an error.
@@ -963,6 +1093,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "license_info": license_info,
                 "repositories": repositories_list,
                 "sobrs": sobr_list,
+                "proxies": proxies_list,
+                "wan_accelerators": wan_accelerators_list,
                 "ha_cluster": ha_cluster,
                 "diagnostics": {
                     "connected": connected,

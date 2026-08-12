@@ -69,6 +69,7 @@ async def async_setup_entry(
     added_repository_ids: set[str] = set()
     added_sobr_extent_ids: set[tuple[str, str]] = set()  # (sobr_id, extent_id) tuples
     added_job_ids: set[str] = set()
+    added_proxy_ids: set[str] = set()
     ha_cluster_added = False
 
     @callback
@@ -173,6 +174,22 @@ async def async_setup_entry(
                         sobr_id,
                         extent_id,
                     )
+
+        # ---- PROXY BUTTONS - a proxy can be taken out of service without deleting it ----
+        if check_api_feature_availability(api_version, "api.proxies"):
+            for proxy in coordinator.data.get("proxies", []):
+                proxy_id = proxy.get("id")
+                if not proxy_id or proxy_id in added_proxy_ids:
+                    continue
+
+                new_entities.extend(
+                    [
+                        VeeamProxyEnableButton(coordinator, entry, proxy, veeam_client),
+                        VeeamProxyDisableButton(coordinator, entry, proxy, veeam_client),
+                    ]
+                )
+                added_proxy_ids.add(proxy_id)
+                _LOGGER.debug("Adding proxy buttons for: %s", proxy.get("name"))
 
         # ---- HA CLUSTER BUTTONS (once) - clustered servers on 1.3-rev2 and newer ----
         if (
@@ -1091,3 +1108,93 @@ class VeeamHAClusterFailoverButton(VeeamHAClusterButtonBase):
         except Exception as err:
             _LOGGER.error("Failed to fail over the HA cluster: %s", err)
             raise
+
+
+# ===========================
+# PROXY BUTTONS
+#
+# Disabling a proxy takes it out of service without deleting it, which is what an operator
+# reaches for during maintenance on the proxy host.
+# ===========================
+
+
+class VeeamProxyButtonBase(CoordinatorEntity, ButtonEntity):
+    """Base class for proxy buttons."""
+
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator, config_entry, proxy_data, veeam_client):
+        """Initialize the button."""
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._veeam_client = veeam_client
+        self._proxy_id = proxy_data.get("id")
+        self._proxy_name = proxy_data.get("name", "Unknown")
+
+    def _proxy(self) -> dict | None:
+        if not self.coordinator.data:
+            return None
+        for proxy in self.coordinator.data.get("proxies", []):
+            if proxy.get("id") == self._proxy_id:
+                return proxy
+        return None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._proxy() is not None
+
+    @property
+    def device_info(self):
+        """Return device info for this proxy."""
+        return {
+            "identifiers": {(DOMAIN, f"proxy_{self._proxy_id}")},
+            "name": self._proxy_name,
+            "manufacturer": "Veeam",
+            "model": "Backup Proxy",
+        }
+
+    async def _call(self, operation_name: str, action: str) -> None:
+        """Run one proxy operation and refresh."""
+        try:
+            proxies_api = await asyncio.to_thread(self._veeam_client.api, "proxies")
+            await self._veeam_client.call(getattr(proxies_api, operation_name), id=self._proxy_id)
+            _LOGGER.info("%s proxy %s", action, self._proxy_name)
+            await self.coordinator.async_request_refresh()
+        except Exception as err:
+            _LOGGER.error("Failed to %s proxy %s: %s", action.lower(), self._proxy_name, err)
+            raise
+
+
+class VeeamProxyEnableButton(VeeamProxyButtonBase):
+    """Button to put a proxy back into service."""
+
+    def __init__(self, coordinator, config_entry, proxy_data, veeam_client):
+        super().__init__(coordinator, config_entry, proxy_data, veeam_client)
+        self._attr_unique_id = f"{config_entry.entry_id}_proxy_{self._proxy_id}_enable"
+        self._attr_name = "Enable"
+
+    @property
+    def icon(self) -> str:
+        return "mdi:play"
+
+    async def async_press(self) -> None:
+        """Handle the button press to enable the proxy."""
+        await self._call("enable_proxy", "Enabled")
+
+
+class VeeamProxyDisableButton(VeeamProxyButtonBase):
+    """Button to take a proxy out of service."""
+
+    def __init__(self, coordinator, config_entry, proxy_data, veeam_client):
+        super().__init__(coordinator, config_entry, proxy_data, veeam_client)
+        self._attr_unique_id = f"{config_entry.entry_id}_proxy_{self._proxy_id}_disable"
+        self._attr_name = "Disable"
+
+    @property
+    def icon(self) -> str:
+        return "mdi:pause"
+
+    async def async_press(self) -> None:
+        """Handle the button press to disable the proxy."""
+        await self._call("disable_proxy", "Disabled")

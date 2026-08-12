@@ -161,6 +161,7 @@ def test_optional_inputs_have_defaults(path):
         "repository_sensors",
         "expiry_sensors",
         "failover_sensor",
+        "proxy_online_sensors",
         "notification_action",
     }
     assert set(mandatory) <= allowed, f"unexpectedly mandatory: {sorted(set(mandatory) - allowed)}"

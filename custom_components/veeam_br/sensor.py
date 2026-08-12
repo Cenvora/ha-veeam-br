@@ -38,6 +38,8 @@ async def async_setup_entry(
     added_job_ids: set[str] = set()
     added_repository_ids: set[str] = set()
     added_sobr_ids: set[str] = set()
+    added_proxy_ids: set[str] = set()
+    added_wan_ids: set[str] = set()
     server_added = False
     license_added = False
     ha_cluster_added = False
@@ -135,6 +137,35 @@ async def async_setup_entry(
                     sobr.get("name"),
                     sobr_id,
                 )
+
+        # ---- PROXY SENSORS (dynamic) - one device per backup proxy ----
+        if check_api_feature_availability(api_version, "api.proxies"):
+            for proxy in coordinator.data.get("proxies", []):
+                proxy_id = proxy.get("id")
+                if not proxy_id or proxy_id in added_proxy_ids:
+                    continue
+
+                new_entities.extend(
+                    [
+                        VeeamProxyOnlineSensor(coordinator, entry, proxy),
+                        VeeamProxyEnabledSensor(coordinator, entry, proxy),
+                        VeeamProxyOutOfDateSensor(coordinator, entry, proxy),
+                        VeeamProxyTypeSensor(coordinator, entry, proxy),
+                    ]
+                )
+                added_proxy_ids.add(proxy_id)
+                _LOGGER.debug("Adding proxy sensors for: %s", proxy.get("name"))
+
+        # ---- WAN ACCELERATOR SENSORS (dynamic) - one device per accelerator ----
+        if check_api_feature_availability(api_version, "api.wan_accelerators"):
+            for accelerator in coordinator.data.get("wan_accelerators", []):
+                wan_id = accelerator.get("id")
+                if not wan_id or wan_id in added_wan_ids:
+                    continue
+
+                new_entities.append(VeeamWanAcceleratorCacheSensor(coordinator, entry, accelerator))
+                added_wan_ids.add(wan_id)
+                _LOGGER.debug("Adding WAN accelerator sensors for: %s", accelerator.get("name"))
 
         # ---- SERVER SENSORS (once) - Server info becomes a device with multiple sensors ----
         # Server data comes from service API, only create if available
@@ -1874,3 +1905,231 @@ class VeeamLicenseInstancesUsedPercentSensor(VeeamLicenseBaseSensor):
         if value >= 70:
             return "mdi:gauge-low"
         return "mdi:gauge"
+
+
+# ===========================
+# BACKUP PROXIES (device per proxy)
+#
+# get_all_proxies_states carries both the configuration and the live state, so one call feeds
+# every entity here.
+# ===========================
+
+
+class VeeamProxyMixin:
+    """Mixin providing shared proxy functionality."""
+
+    def __init__(self, coordinator, config_entry, proxy_data):
+        """Initialize the mixin."""
+        self._config_entry = config_entry
+        self._proxy_id = proxy_data.get("id")
+        self._proxy_name = proxy_data.get("name", "Unknown")
+
+    def _proxy(self) -> dict[str, Any] | None:
+        """Get this proxy from coordinator data."""
+        if not self.coordinator.data:
+            return None
+        for proxy in self.coordinator.data.get("proxies", []):
+            if proxy.get("id") == self._proxy_id:
+                return proxy
+        return None
+
+    @property
+    def available(self) -> bool:
+        """A proxy removed from the server should not keep reporting."""
+        return super().available and self._proxy() is not None
+
+    @property
+    def device_info(self):
+        """Return device info for this proxy."""
+        return {
+            "identifiers": {(DOMAIN, f"proxy_{self._proxy_id}")},
+            "name": self._proxy_name,
+            "manufacturer": "Veeam",
+            "model": "Backup Proxy",
+        }
+
+
+class VeeamProxyBaseSensor(VeeamProxyMixin, CoordinatorEntity, SensorEntity):
+    """Base class for proxy sensors."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry, proxy_data):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamProxyMixin.__init__(self, coordinator, config_entry, proxy_data)
+
+
+class VeeamProxyBinarySensorBase(VeeamProxyMixin, CoordinatorEntity, BinarySensorEntity):
+    """Base class for proxy binary sensors."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry, proxy_data):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamProxyMixin.__init__(self, coordinator, config_entry, proxy_data)
+
+
+class VeeamProxyOnlineSensor(VeeamProxyBinarySensorBase):
+    """Binary sensor for whether a proxy is online."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator, config_entry, proxy_data):
+        super().__init__(coordinator, config_entry, proxy_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_proxy_{self._proxy_id}_online"
+        self._attr_name = "Online"
+
+    @property
+    def is_on(self) -> bool | None:
+        proxy = self._proxy()
+        return proxy.get("is_online") if proxy else None
+
+
+class VeeamProxyEnabledSensor(VeeamProxyBinarySensorBase):
+    """Binary sensor for whether a proxy is enabled.
+
+    Reported as enabled rather than disabled, so "on" is the healthy state and the tile colour
+    matches every other sensor here.
+    """
+
+    def __init__(self, coordinator, config_entry, proxy_data):
+        super().__init__(coordinator, config_entry, proxy_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_proxy_{self._proxy_id}_enabled"
+        self._attr_name = "Enabled"
+
+    @property
+    def is_on(self) -> bool | None:
+        proxy = self._proxy()
+        if not proxy or proxy.get("is_disabled") is None:
+            return None
+        return not proxy["is_disabled"]
+
+    @property
+    def icon(self) -> str:
+        return "mdi:play-circle" if self.is_on else "mdi:pause-circle"
+
+
+class VeeamProxyOutOfDateSensor(VeeamProxyBinarySensorBase):
+    """Binary sensor for a proxy running outdated components."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry, proxy_data):
+        super().__init__(coordinator, config_entry, proxy_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_proxy_{self._proxy_id}_out_of_date"
+        self._attr_name = "Out Of Date"
+
+    @property
+    def is_on(self) -> bool | None:
+        proxy = self._proxy()
+        return proxy.get("is_out_of_date") if proxy else None
+
+
+class VeeamProxyTypeSensor(VeeamProxyBaseSensor):
+    """Sensor for the proxy type."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry, proxy_data):
+        super().__init__(coordinator, config_entry, proxy_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_proxy_{self._proxy_id}_type"
+        self._attr_name = "Type"
+
+    @property
+    def native_value(self) -> str | None:
+        proxy = self._proxy()
+        return proxy.get("type") if proxy else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        proxy = self._proxy() or {}
+        return {
+            "raw_value": proxy.get("type_raw"),
+            "host": proxy.get("host_name"),
+            "description": proxy.get("description"),
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:transit-connection-variant"
+
+
+# ===========================
+# WAN ACCELERATORS (device per accelerator)
+#
+# There is no states endpoint for these, so this is configuration only.
+# ===========================
+
+
+class VeeamWanAcceleratorMixin:
+    """Mixin providing shared WAN accelerator functionality."""
+
+    def __init__(self, coordinator, config_entry, accelerator_data):
+        """Initialize the mixin."""
+        self._config_entry = config_entry
+        self._wan_id = accelerator_data.get("id")
+        self._wan_name = accelerator_data.get("name", "Unknown")
+
+    def _accelerator(self) -> dict[str, Any] | None:
+        if not self.coordinator.data:
+            return None
+        for accelerator in self.coordinator.data.get("wan_accelerators", []):
+            if accelerator.get("id") == self._wan_id:
+                return accelerator
+        return None
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._accelerator() is not None
+
+    @property
+    def device_info(self):
+        """Return device info for this WAN accelerator."""
+        return {
+            "identifiers": {(DOMAIN, f"wan_{self._wan_id}")},
+            "name": self._wan_name,
+            "manufacturer": "Veeam",
+            "model": "WAN Accelerator",
+        }
+
+
+class VeeamWanAcceleratorCacheSensor(VeeamWanAcceleratorMixin, CoordinatorEntity, SensorEntity):
+    """Sensor for the configured cache size."""
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry, accelerator_data):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamWanAcceleratorMixin.__init__(self, coordinator, config_entry, accelerator_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_wan_{self._wan_id}_cache_size"
+        self._attr_name = "Cache Size"
+
+    @property
+    def native_value(self):
+        accelerator = self._accelerator()
+        return accelerator.get("cache_size") if accelerator else None
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Veeam reports the unit alongside the number rather than fixing it."""
+        accelerator = self._accelerator() or {}
+        unit = accelerator.get("cache_size_unit")
+        # Home Assistant expects the symbol, and Veeam spells it out
+        return {"TB": "TB", "GB": "GB", "MB": "MB"}.get(unit, unit)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        accelerator = self._accelerator() or {}
+        return {
+            "cache_folder": accelerator.get("cache_folder"),
+            "traffic_port": accelerator.get("traffic_port"),
+            "streams": accelerator.get("streams_count"),
+            "high_bandwidth_mode": accelerator.get("high_bandwidth_mode"),
+            "description": accelerator.get("description"),
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:database-clock"

@@ -179,6 +179,11 @@ The integration also creates devices for:
 - **License**: License device has sensors for status, edition, expiration dates, and — on
   instance-based licences — instances licensed, instances used and percentage used, with the
   per-workload-type breakdown as attributes.
+- **Backup Proxies**: each proxy device has online, enabled and out-of-date sensors, a type
+  sensor carrying its host as an attribute, and enable/disable buttons for taking a proxy out
+  of service during maintenance.
+- **WAN Accelerators**: cache size, with the cache folder, traffic port, stream count and
+  high-bandwidth mode as attributes.
 - **High Availability Cluster**: on a clustered Veeam B&R 13.1 server (API `1.3-rev2`), a
   cluster device with online and failover-in-progress sensors, cluster endpoint and last-online
   diagnostics, per-node replication state, Patroni role and replication lag, plus switchover
@@ -291,6 +296,14 @@ One digest a day: how many jobs succeeded, warned or failed, and which need atte
 [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fdaily_backup_summary.yaml)
 
 <sub>Source: [`daily_backup_summary.yaml`](blueprints/automation/veeam_br/daily_backup_summary.yaml)</sub>
+
+### Backup proxy offline
+
+Fires when a proxy stays offline, and optionally when it returns. Can ignore proxies you have deliberately disabled.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fproxy_offline.yaml)
+
+<sub>Source: [`proxy_offline.yaml`](blueprints/automation/veeam_br/proxy_offline.yaml)</sub>
 
 ### A note on which sensor to pick
 
@@ -482,6 +495,8 @@ The integration monitors the following Veeam objects:
 - ✅ **Scale-Out Repositories** - SOBR and extents
 - ✅ **Server Information** - Veeam server details
 - ✅ **License Information** - License status and expiration
+- ✅ **Backup Proxies** - online state, enabled state, out-of-date components, enable/disable
+- ✅ **WAN Accelerators** - cache configuration
 - ✅ **High Availability Cluster** - cluster state, node roles and replication lag, with
   switchover and failover actions (Veeam B&R 13.1 and the `1.3-rev2` API version)
 
