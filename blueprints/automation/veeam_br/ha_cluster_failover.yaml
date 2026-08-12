@@ -43,6 +43,8 @@ mode: queued
 max: 10
 
 triggers:
+  # from/to are both pinned deliberately: a reload takes these sensors through unavailable,
+  # and "unavailable -> on" does not match "off -> on", so a restart cannot re-alert
   - trigger: state
     entity_id: !input failover_sensor
     from: "off"

@@ -204,3 +204,30 @@ def test_hacs_declares_the_supported_home_assistant_version():
         "blueprints use the plural trigger/action keys, which need 2024.10+; the project "
         "targets 2026.1+"
     )
+
+
+def test_state_based_blueprints_survive_a_reload():
+    """A reload takes every entity through unavailable, which looks like a state change.
+
+    Without a guard, reloading the integration or restarting Home Assistant re-notifies about
+    conditions that were already true and already reported.
+    """
+    for name in ("job_failed.yaml", "repository_space_low.yaml"):
+        text = (BLUEPRINT_DIR / name).read_text(encoding="utf-8")
+        assert "trigger.from_state is not none" in text, f"{name} should ignore restored states"
+        assert "unavailable" in text, f"{name} should name the state it is guarding against"
+
+
+def test_numeric_blueprints_require_a_numeric_previous_state():
+    """numeric_state counts "unavailable -> 90" as crossing the threshold."""
+    text = (BLUEPRINT_DIR / "repository_space_low.yaml").read_text(encoding="utf-8")
+
+    assert "float(-1)" in text, "the previous state should have to be a real number"
+
+
+def test_state_triggers_that_pin_from_are_left_alone():
+    """ha_cluster_failover is already safe: "unavailable -> on" cannot match "off -> on"."""
+    text = (BLUEPRINT_DIR / "ha_cluster_failover.yaml").read_text(encoding="utf-8")
+
+    assert 'from: "off"' in text and 'to: "on"' in text
+    assert 'from: "on"' in text and 'to: "off"' in text

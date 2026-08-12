@@ -6,6 +6,9 @@ blueprint:
 
     Pick the **Used Percentage** sensors of the repositories you want to watch. Scale-out
     repositories report per-extent, so watch the extents rather than the SOBR.
+
+    Reloading the integration or restarting Home Assistant will not re-notify about a
+    repository that was already over the threshold.
   domain: automation
   source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/repository_space_low.yaml
   author: Cenvora
@@ -68,6 +71,16 @@ triggers:
     entity_id: !input repository_sensors
     below: !input threshold
     id: recovered
+
+conditions:
+  # Reloading the integration or restarting Home Assistant takes these sensors through
+  # unavailable, and a numeric_state trigger counts "unavailable -> 90" as a fresh crossing.
+  # Requiring a numeric previous state means only real crossings notify.
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none
+         and trigger.from_state.state | lower not in ['unknown', 'unavailable']
+         and trigger.from_state.state | float(-1) >= 0 }}
 
 variables:
   threshold: !input threshold
