@@ -34,11 +34,13 @@ async def async_setup_entry(
     added_sobr_ids: set[str] = set()
     server_added = False
     license_added = False
+    ha_cluster_added = False
 
     @callback
     def _sync_entities() -> None:
         nonlocal server_added
         nonlocal license_added
+        nonlocal ha_cluster_added
 
         if not coordinator.data:
             return
@@ -174,6 +176,32 @@ async def async_setup_entry(
                 ]
             )
             license_added = True
+
+        # ---- HA CLUSTER SENSORS (once) - clustered servers on 1.3-rev2 and newer only ----
+        if (
+            not ha_cluster_added
+            and coordinator.data.get("ha_cluster")
+            and check_api_feature_availability(api_version, "api.high_availability_ha_cluster")
+        ):
+            new_entities.extend(
+                [
+                    VeeamHAClusterOnlineSensor(coordinator, entry),
+                    VeeamHAClusterFailoverInProgressSensor(coordinator, entry),
+                    VeeamHAClusterMaintenanceSensor(coordinator, entry),
+                    VeeamHAClusterLastOnlineSensor(coordinator, entry),
+                    VeeamHAClusterEndpointSensor(coordinator, entry),
+                ]
+            )
+            for node_key, node_label in (("primary", "Primary"), ("secondary", "Secondary")):
+                new_entities.extend(
+                    [
+                        VeeamHAClusterNodeStateSensor(coordinator, entry, node_key, node_label),
+                        VeeamHAClusterNodeRoleSensor(coordinator, entry, node_key, node_label),
+                        VeeamHAClusterNodeLagSensor(coordinator, entry, node_key, node_label),
+                    ]
+                )
+            ha_cluster_added = True
+            _LOGGER.debug("Adding HA cluster sensors")
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam sensors", len(new_entities))
@@ -1403,3 +1431,269 @@ class VeeamSOBRExtentCountSensor(VeeamSOBRBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:counter"
+
+
+# ===========================
+# HIGH AVAILABILITY CLUSTER (device per config entry)
+#
+# Only present on API 1.3-rev2 (VBR 13.1) and newer, and only when the server is actually
+# clustered. Node roles come from Patroni: Leader, Replica, StandbyLeader, SyncStandby.
+# ===========================
+
+
+class VeeamHAClusterMixin:
+    """Mixin providing shared HA cluster functionality."""
+
+    def __init__(self, coordinator, config_entry):
+        """Initialize the mixin."""
+        self._config_entry = config_entry
+
+    def _cluster(self) -> dict[str, Any] | None:
+        """Get HA cluster data from coordinator data."""
+        return self.coordinator.data.get("ha_cluster") if self.coordinator.data else None
+
+    def _node(self, which: str) -> dict[str, Any] | None:
+        """Get one cluster node ("primary" or "secondary")."""
+        cluster = self._cluster()
+        return cluster.get(which) if cluster else None
+
+    @property
+    def available(self) -> bool:
+        """A cluster that stops being reported should not keep showing stale values."""
+        return super().available and self._cluster() is not None
+
+    @property
+    def device_info(self):
+        """Return device info for the HA cluster."""
+        cluster = self._cluster()
+        name = (cluster.get("name") if cluster else None) or "HA Cluster"
+        host = self._config_entry.data.get(CONF_HOST, "Unknown")
+        return {
+            "identifiers": {(DOMAIN, f"ha_cluster_{self._config_entry.entry_id}")},
+            "name": f"{name} ({host})",
+            "manufacturer": "Veeam",
+            "model": "High Availability Cluster",
+        }
+
+
+class VeeamHAClusterBaseSensor(VeeamHAClusterMixin, CoordinatorEntity, SensorEntity):
+    """Base class for HA cluster sensors."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamHAClusterMixin.__init__(self, coordinator, config_entry)
+
+
+class VeeamHAClusterBinarySensorBase(VeeamHAClusterMixin, CoordinatorEntity, BinarySensorEntity):
+    """Base class for HA cluster binary sensors."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamHAClusterMixin.__init__(self, coordinator, config_entry)
+
+
+class VeeamHAClusterOnlineSensor(VeeamHAClusterBinarySensorBase):
+    """Binary sensor for whether the HA cluster is online."""
+
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_online"
+        self._attr_name = "Online"
+
+    @property
+    def is_on(self) -> bool | None:
+        cluster = self._cluster()
+        return cluster.get("is_online") if cluster else None
+
+
+class VeeamHAClusterFailoverInProgressSensor(VeeamHAClusterBinarySensorBase):
+    """Binary sensor for an in-progress failover."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_failover_in_progress"
+        self._attr_name = "Failover In Progress"
+
+    @property
+    def is_on(self) -> bool | None:
+        cluster = self._cluster()
+        return cluster.get("is_failover_in_progress") if cluster else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:swap-horizontal-bold" if self.is_on else "mdi:swap-horizontal"
+
+
+class VeeamHAClusterMaintenanceSensor(VeeamHAClusterBinarySensorBase):
+    """Binary sensor for cluster maintenance mode."""
+
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_maintenance"
+        self._attr_name = "Maintenance In Progress"
+
+    @property
+    def is_on(self) -> bool | None:
+        cluster = self._cluster()
+        return cluster.get("is_maintenance_in_progress") if cluster else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:wrench-clock" if self.is_on else "mdi:wrench"
+
+
+class VeeamHAClusterLastOnlineSensor(VeeamHAClusterBaseSensor):
+    """Sensor for when the cluster was last online."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_last_online"
+        self._attr_name = "Last Online"
+
+    @property
+    def native_value(self):
+        cluster = self._cluster()
+        return cluster.get("last_online_time") if cluster else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:clock-check"
+
+
+class VeeamHAClusterEndpointSensor(VeeamHAClusterBaseSensor):
+    """Sensor for the cluster endpoint."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_endpoint"
+        self._attr_name = "Cluster Endpoint"
+
+    @property
+    def native_value(self) -> str | None:
+        cluster = self._cluster()
+        return cluster.get("cluster_endpoint") if cluster else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        cluster = self._cluster() or {}
+        return {
+            "dns_name": cluster.get("cluster_dns_name"),
+            "cross_subnet_mode": cluster.get("is_cross_subnet_mode"),
+            "endpoint_migration_in_progress": cluster.get("is_endpoint_migration_in_progress"),
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:ip-network"
+
+
+class VeeamHAClusterNodeSensorBase(VeeamHAClusterBaseSensor):
+    """Base class for a sensor reporting on one cluster node."""
+
+    def __init__(self, coordinator, config_entry, node_key, node_label):
+        super().__init__(coordinator, config_entry)
+        self._node_key = node_key
+        self._node_label = node_label
+
+    def _node_data(self) -> dict[str, Any] | None:
+        return self._node(self._node_key)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._node_data() is not None
+
+
+class VeeamHAClusterNodeStateSensor(VeeamHAClusterNodeSensorBase):
+    """Sensor for a node's replication state."""
+
+    def __init__(self, coordinator, config_entry, node_key, node_label):
+        super().__init__(coordinator, config_entry, node_key, node_label)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_{node_key}_state"
+        self._attr_name = f"{node_label} Node State"
+
+    @property
+    def native_value(self) -> str | None:
+        node = self._node_data()
+        return node.get("state") if node else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        node = self._node_data() or {}
+        return {
+            "name": node.get("name"),
+            "role": node.get("role"),
+            "ip_address": node.get("ip_address"),
+            "fqdn": node.get("fqdn"),
+            "timeline": node.get("timeline"),
+            "external_endpoint": node.get("external_endpoint"),
+        }
+
+    @property
+    def icon(self) -> str:
+        state = (self.native_value or "").lower()
+        if state in ("running", "streaming"):
+            return "mdi:database-check"
+        if state in ("crashed", "initdbfailed", "restartfailed", "startfailed", "stopfailed"):
+            return "mdi:database-alert"
+        if state == "stopped":
+            return "mdi:database-off"
+        return "mdi:database-clock"
+
+
+class VeeamHAClusterNodeRoleSensor(VeeamHAClusterNodeSensorBase):
+    """Sensor for a node's cluster role."""
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, config_entry, node_key, node_label):
+        super().__init__(coordinator, config_entry, node_key, node_label)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_{node_key}_role"
+        self._attr_name = f"{node_label} Node Role"
+
+    @property
+    def native_value(self) -> str | None:
+        node = self._node_data()
+        return node.get("role") if node else None
+
+    @property
+    def icon(self) -> str:
+        leader = (self.native_value or "").lower() == "leader"
+        return "mdi:crown" if leader else "mdi:account-group"
+
+
+class VeeamHAClusterNodeLagSensor(VeeamHAClusterNodeSensorBase):
+    """Sensor for a node's replication lag."""
+
+    _attr_native_unit_of_measurement = "MB"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry, node_key, node_label):
+        super().__init__(coordinator, config_entry, node_key, node_label)
+        self._attr_unique_id = f"{config_entry.entry_id}_ha_cluster_{node_key}_lag"
+        self._attr_name = f"{node_label} Node Lag"
+
+    @property
+    def native_value(self) -> int | float | None:
+        node = self._node_data()
+        lag = node.get("lag_mb") if node else None
+        return lag if isinstance(lag, (int, float)) else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:timer-sand"
