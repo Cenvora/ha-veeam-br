@@ -248,6 +248,72 @@ def _cluster_absent_reason(result) -> tuple[bool, str]:
     return False, detail or type(result).__name__
 
 
+# Device identifier prefixes, mapped to the coordinator data that keeps them alive
+DEVICE_KINDS = {
+    "job_": "jobs",
+    "repository_": "repositories",
+    "sobr_": "sobrs",
+}
+SINGLETON_KINDS = {
+    "server_": "server_info",
+    "license_": "license_info",
+    "ha_cluster_": "ha_cluster",
+}
+
+
+def device_is_current(identifiers, data: dict | None, entry_id: str) -> bool:
+    """Whether a device still corresponds to something the server reports.
+
+    Used to decide whether Home Assistant should let the user delete a device. A device that
+    is still being reported would simply reappear on the next poll, so refusing is kinder than
+    letting someone delete it twice.
+
+    An identifier this version does not recognise counts as stale: it cannot be something the
+    current code maintains.
+    """
+    if not data:
+        # Nothing to compare against — let the user clean up rather than blocking them
+        return False
+
+    for domain, identifier in identifiers:
+        if domain != DOMAIN:
+            continue
+
+        for prefix, key in DEVICE_KINDS.items():
+            if identifier.startswith(prefix):
+                wanted = identifier[len(prefix) :]
+                return any(item.get("id") == wanted for item in data.get(key) or [])
+
+        for prefix, key in SINGLETON_KINDS.items():
+            if identifier.startswith(prefix):
+                # These are one per config entry, so the suffix is the entry id
+                return identifier == f"{prefix}{entry_id}" and data.get(key) is not None
+
+    return False
+
+
+async def async_remove_config_entry_device(hass: HomeAssistant, entry: ConfigEntry, device) -> bool:
+    """Allow deleting a device from the UI once the server stops reporting it.
+
+    Without this, Home Assistant offers no Delete button at all and a job or repository that
+    no longer exists can only be disabled. Deletion is refused while the object is still
+    being reported, because the next poll would recreate it.
+    """
+    runtime = getattr(entry, "runtime_data", None) or {}
+    coordinator = runtime.get("coordinator")
+    data = getattr(coordinator, "data", None)
+
+    if device_is_current(device.identifiers, data, entry.entry_id):
+        _LOGGER.debug(
+            "Refusing to remove %s: the server still reports it, so it would come back",
+            device.name,
+        )
+        return False
+
+    _LOGGER.info("Removing device %s at the user's request", device.name)
+    return True
+
+
 def _license_issue_id(entry: ConfigEntry) -> str:
     """Repair issue ID for one config entry's license warning."""
     return f"unsupported_license_{entry.entry_id}"
