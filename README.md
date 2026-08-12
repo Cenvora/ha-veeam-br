@@ -290,7 +290,8 @@ All devices and entities associated with this integration will be removed.
 - Verify the Veeam server is running and accessible from Home Assistant
 - Check that the REST API is enabled on the Veeam server
 - Confirm the hostname/IP and port are correct — 443 on Veeam B&R 13.1 and newer, 9419 on
-  older releases
+  older releases. If you get the port wrong, the setup form checks the other one and tells
+  you which it found
 - Ensure firewall rules allow traffic on the REST API port (443, or 9419 on older releases)
 - Try disabling SSL verification if using self-signed certificates
 

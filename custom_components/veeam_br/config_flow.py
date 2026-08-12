@@ -30,6 +30,17 @@ from .sdk_patches import patch_models as patch_null_values_in_models
 _LOGGER = logging.getLogger(__name__)
 
 
+class WrongPortError(ConnectionError):
+    """The configured port did not answer, but another REST API port did.
+
+    Carries the port that answered so the form can name it.
+    """
+
+    def __init__(self, port: int) -> None:
+        super().__init__(f"The REST API answered on port {port}, not the configured port")
+        self.port = port
+
+
 def _get_api_version_selector_config(
     preferred_version: str | None = None,
 ) -> tuple[list[str], str]:
@@ -84,6 +95,33 @@ async def async_resolve_api_version(data: dict[str, Any]) -> str:
 
     _LOGGER.info("Detected API version %s on %s", detected, data[CONF_HOST])
     return detected
+
+
+async def async_find_working_port(data: dict[str, Any], configured_port: int) -> int | None:
+    """Return another port the REST API answers on, or None.
+
+    Veeam B&R 13.1 moved the REST API to 443 and will eventually drop 9419, so "cannot
+    connect" is now quite often the wrong port rather than a wrong host or a firewall. Worth
+    one extra probe to be able to say which.
+    """
+    from veeam_br.discovery import DEFAULT_PORTS, detect_rest_api
+
+    others = [port for port in DEFAULT_PORTS if port != configured_port]
+    if not others:
+        return None
+
+    try:
+        endpoint = await detect_rest_api(
+            data[CONF_HOST],
+            ports=others,
+            versions=list(API_VERSIONS),
+            verify_ssl=data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+        )
+    except Exception as err:  # noqa: BLE001 - a failed probe just means no advice to give
+        _LOGGER.debug("Port probe failed: %s", err)
+        return None
+
+    return endpoint.port if endpoint else None
 
 
 def _load_veeam_br(api_version: str):
@@ -145,6 +183,15 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     except PermissionError:
         raise
     except Exception as err:
+        working_port = await async_find_working_port(data, data[CONF_PORT])
+        if working_port is not None:
+            _LOGGER.warning(
+                "Could not reach the Veeam REST API on %s:%s, but it answered on port %s",
+                data[CONF_HOST],
+                data[CONF_PORT],
+                working_port,
+            )
+            raise WrongPortError(working_port) from err
         raise ConnectionError(f"Failed to connect: {err}") from err
 
     return {"title": f"Veeam B&R ({data[CONF_HOST]})"}
@@ -163,6 +210,7 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle reconfiguration of the integration."""
         errors: dict[str, str] = {}
+        wrong_port: int | None = None
         reconf_entry = self._get_reconfigure_entry()
 
         if user_input is not None:
@@ -180,6 +228,10 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await validate_input(self.hass, data)
             except PermissionError:
                 errors["base"] = "invalid_auth"
+            except WrongPortError as err:
+                # Subclasses ConnectionError, so it has to be caught before it
+                errors["base"] = "wrong_port"
+                wrong_port = err.port
             except ConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:
@@ -213,6 +265,7 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={
                 "host": reconf_entry.data.get(CONF_HOST),
+                "wrong_port": str(wrong_port or ""),
             },
         )
 
@@ -225,6 +278,7 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> FlowResult:
         """Confirm reauth dialog."""
         errors: dict[str, str] = {}
+        wrong_port: int | None = None
         reauth_entry = self._get_reauth_entry()
 
         if user_input is not None:
@@ -239,6 +293,10 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await validate_input(self.hass, data)
             except PermissionError:
                 errors["base"] = "invalid_auth"
+            except WrongPortError as err:
+                # Subclasses ConnectionError, so it has to be caught before it
+                errors["base"] = "wrong_port"
+                wrong_port = err.port
             except ConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:
@@ -264,11 +322,13 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
             description_placeholders={
                 "host": reauth_entry.data[CONF_HOST],
+                "wrong_port": str(wrong_port or ""),
             },
         )
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
+        wrong_port: int | None = None
 
         if user_input is not None:
             await self.async_set_unique_id(f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}")
@@ -278,6 +338,10 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, user_input)
             except PermissionError:
                 errors["base"] = "invalid_auth"
+            except WrongPortError as err:
+                # Subclasses ConnectionError, so it has to be caught before it
+                errors["base"] = "wrong_port"
+                wrong_port = err.port
             except ConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:
@@ -318,7 +382,12 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-        return self.async_show_form(step_id="user", data_schema=data_schema, errors=errors)
+        return self.async_show_form(
+            step_id="user",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders={"wrong_port": str(wrong_port or "")},
+        )
 
 
 class VeeamBROptionsFlow(config_entries.OptionsFlow):
@@ -326,6 +395,7 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors: dict[str, str] = {}
+        wrong_port: int | None = None
 
         if user_input is not None:
             test_data = {**self.config_entry.data, CONF_API_VERSION: user_input[CONF_API_VERSION]}
@@ -334,6 +404,10 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
                 await validate_input(self.hass, test_data)
             except PermissionError:
                 errors["base"] = "invalid_auth"
+            except WrongPortError as err:
+                # Subclasses ConnectionError, so it has to be caught before it
+                errors["base"] = "wrong_port"
+                wrong_port = err.port
             except ConnectionError:
                 errors["base"] = "cannot_connect"
             except Exception:
@@ -375,4 +449,9 @@ class VeeamBROptionsFlow(config_entries.OptionsFlow):
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=options_schema, errors=errors)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=options_schema,
+            errors=errors,
+            description_placeholders={"wrong_port": str(wrong_port or "")},
+        )
