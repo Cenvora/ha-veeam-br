@@ -1,0 +1,95 @@
+blueprint:
+  name: Veeam license expiring soon
+  description: >-
+    Notify daily once a Veeam license — or its support contract — is within a chosen number of
+    days of expiring.
+
+    Checks once a day at a time you choose rather than reacting to a state change, so the
+    reminder keeps arriving until the license is renewed. Perpetual licenses report no
+    expiration date and are simply skipped.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/license_expiring.yaml
+  author: Cenvora
+  input:
+    expiry_sensors:
+      name: Expiration sensors
+      description: >-
+        The license "Expiration Date" sensor, the "Support Expiration Date" sensor, or both.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: veeam_br
+              domain: sensor
+              device_class: timestamp
+    days_before:
+      name: Warn this many days ahead
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 365
+          unit_of_measurement: days
+          mode: box
+    check_time:
+      name: Check at
+      description: Time of day to check.
+      default: "09:00:00"
+      selector:
+        time:
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run while a license is expiring. Available variables: `expiring` (a list of
+        `{name, entity_id, days_left, expires}` mappings), `soonest_days_left`, and ready-made
+        `title` and `message`.
+      selector:
+        action:
+
+mode: single
+
+triggers:
+  - trigger: time
+    at: !input check_time
+
+variables:
+  days_before: !input days_before
+  expiry_sensors: !input expiry_sensors
+  # A perpetual license has no expiry date, so its sensor is unknown/unavailable — skip those
+  # rather than treating an unparseable date as "expiring now"
+  expiring: >-
+    {% set ns = namespace(items=[]) %}
+    {% for entity_id in expiry_sensors %}
+      {% set value = states(entity_id) %}
+      {% if value not in ['unknown', 'unavailable', 'none', ''] %}
+        {% set expires = as_datetime(value) %}
+        {% if expires is not none %}
+          {% set days_left = ((expires - now()).total_seconds() / 86400) | round(0, 'floor') | int %}
+          {% if days_left <= days_before %}
+            {% set ns.items = ns.items + [{
+                 'name': state_attr(entity_id, 'friendly_name') or entity_id,
+                 'entity_id': entity_id,
+                 'days_left': days_left,
+                 'expires': expires.isoformat(),
+               }] %}
+          {% endif %}
+        {% endif %}
+      {% endif %}
+    {% endfor %}
+    {{ ns.items }}
+  soonest_days_left: >-
+    {{ expiring | map(attribute='days_left') | list | min if expiring | count > 0 else none }}
+  title: >-
+    {{ 'Veeam license expires today' if soonest_days_left is not none and soonest_days_left <= 0
+       else 'Veeam license expires in ' ~ soonest_days_left ~ ' days' }}
+  message: >-
+    {% for item in expiring %}
+    {{ item.name }}: {{ 'expired' if item.days_left < 0 else item.days_left ~ ' day(s) left' }}
+    ({{ as_timestamp(item.expires) | timestamp_custom('%Y-%m-%d') }}){{ '\n' if not loop.last }}
+    {% endfor %}
+
+conditions:
+  - condition: template
+    value_template: "{{ expiring | count > 0 }}"
+
+actions: !input notification_action

@@ -1,0 +1,72 @@
+blueprint:
+  name: Veeam HA cluster failover or outage
+  description: >-
+    Notify when a Veeam Backup & Replication High Availability cluster fails over, or goes
+    offline.
+
+    Requires a clustered Veeam B&R 13.1 server and the `1.3-rev2` API version — the cluster
+    device only exists then. A failover means the secondary node took over, so treat it as
+    something to look at even when backups keep running.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/ha_cluster_failover.yaml
+  author: Cenvora
+  input:
+    failover_sensor:
+      name: Failover In Progress sensor
+      description: The cluster's "Failover In Progress" binary sensor.
+      selector:
+        entity:
+          filter:
+            - integration: veeam_br
+              domain: binary_sensor
+    online_sensor:
+      name: Cluster Online sensor
+      description: >-
+        Optional. The cluster's "Online" binary sensor, to also notify when the cluster stops
+        reporting itself online.
+      default: []
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: veeam_br
+              domain: binary_sensor
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run. Available variables: `cluster_name`, `event` (`failover` or `offline`),
+        and ready-made `title` and `message`.
+      selector:
+        action:
+
+mode: queued
+max: 10
+
+triggers:
+  - trigger: state
+    entity_id: !input failover_sensor
+    from: "off"
+    to: "on"
+    id: failover
+  - trigger: state
+    entity_id: !input online_sensor
+    from: "on"
+    to: "off"
+    id: offline
+
+variables:
+  event: "{{ trigger.id }}"
+  cluster_name: >-
+    {{ device_attr(trigger.entity_id, 'name_by_user')
+       or device_attr(trigger.entity_id, 'name')
+       or 'Veeam HA cluster' }}
+  title: >-
+    {{ 'Veeam HA cluster failing over: ' ~ cluster_name
+       if event == 'failover'
+       else 'Veeam HA cluster offline: ' ~ cluster_name }}
+  message: >-
+    {{ 'A failover is in progress on ' ~ cluster_name ~ '. The secondary node is taking over.'
+       if event == 'failover'
+       else cluster_name ~ ' is no longer reporting itself online.' }}
+
+actions: !input notification_action

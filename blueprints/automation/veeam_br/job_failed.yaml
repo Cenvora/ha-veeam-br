@@ -1,0 +1,70 @@
+blueprint:
+  name: Veeam backup job failed
+  description: >-
+    Notify when a Veeam backup job finishes with a failure, and optionally on a warning too.
+
+    Pick the **Last Result** sensors of the jobs you care about — not *Status*. Status reports
+    what the job is doing (running, inactive, disabled); the pass/fail outcome of the last run
+    lives in Last Result.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/job_failed.yaml
+  author: Cenvora
+  input:
+    job_result_sensors:
+      name: Job Last Result sensors
+      description: One or more Veeam job "Last Result" sensors to watch.
+      selector:
+        entity:
+          multiple: true
+          filter:
+            - integration: veeam_br
+              domain: sensor
+    include_warnings:
+      name: Also notify on warnings
+      description: >-
+        Veeam reports a run that completed with problems as a warning rather than a failure.
+      default: false
+      selector:
+        boolean:
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run when a job fails. These variables are available: `job_name`,
+        `job_result`, `job_entity_id`, and ready-made `title` and `message`.
+      selector:
+        action:
+
+# One automation instance can see several jobs fail in the same polling cycle
+mode: queued
+max: 25
+
+triggers:
+  - trigger: state
+    entity_id: !input job_result_sensors
+
+variables:
+  include_warnings: !input include_warnings
+  # ESessionResult is "Failed", "Warning", "Success" or "None". Compared lower-cased because
+  # the Veeam API has shipped different casing for other enums between revisions.
+  bad_results: "{{ ['failed', 'warning'] if include_warnings else ['failed'] }}"
+  job_result: "{{ trigger.to_state.state }}"
+  job_entity_id: "{{ trigger.entity_id }}"
+  # Each job is its own device, so the device name is the job name
+  job_name: >-
+    {{ device_attr(trigger.entity_id, 'name_by_user')
+       or device_attr(trigger.entity_id, 'name')
+       or trigger.to_state.name | replace(' Last Result', '') }}
+  title: "Veeam backup failed: {{ job_name }}"
+  message: "Veeam job {{ job_name }} finished with result {{ job_result }}."
+
+conditions:
+  - condition: template
+    value_template: "{{ job_result | lower in bad_results }}"
+  # Skip the transition out of unknown/unavailable after a restart or reload, which would
+  # otherwise re-notify about a failure that was already reported
+  - condition: template
+    value_template: >-
+      {{ trigger.from_state is not none
+         and trigger.from_state.state | lower not in ['unknown', 'unavailable'] }}
+
+actions: !input notification_action
