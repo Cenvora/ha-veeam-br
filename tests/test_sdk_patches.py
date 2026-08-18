@@ -300,3 +300,123 @@ def test_patch_models_ignores_other_packages_and_none_entries():
 
     assert patched == 1
     assert not getattr(other, sdk_patches.PATCH_MARKER, False), "other packages untouched"
+
+
+# ---------------------------------------------------------------------------
+# Null enum — VBR sends "package": null on an unlicensed server (#104)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("package", sorted(set(veeam_br_versions.values())))
+def test_null_enum_fails_before_patch_and_parses_after(package):
+    """The license error from issue #104, reported by a server in evaluation mode."""
+    sdk_patches = _load_sdk_patches()
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "instance_license_summary_model")
+    real = list(module.ELicensePackageType)[0]
+
+    with pytest.raises(ValueError, match="None is not a valid ELicensePackageType"):
+        module.ELicensePackageType(None)
+
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    assert module.ELicensePackageType(None) is unset, "a null enum should read as absent"
+    assert module.ELicensePackageType(real.value) is real, "real values must still parse"
+
+
+@pytest.mark.parametrize("package", sorted(set(veeam_br_versions.values())))
+def test_null_package_no_longer_empties_the_license_summary(package):
+    """The blast radius: one null enum lost every license figure on the server."""
+    sdk_patches = _load_sdk_patches()
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "instance_license_summary_model")
+    payload = {
+        "licensedInstancesNumber": 10,
+        "usedInstancesNumber": 4,
+        "newInstancesNumber": 0,
+        "rentalInstancesNumber": 0,
+        "package": None,
+    }
+
+    with pytest.raises(ValueError, match="None is not a valid ELicensePackageType"):
+        module.InstanceLicenseSummaryModel.from_dict(dict(payload))
+
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    summary = module.InstanceLicenseSummaryModel.from_dict(dict(payload))
+    assert summary.package is unset
+    assert summary.licensed_instances_number == 10, "the rest of the summary should survive"
+
+
+def test_enum_members_are_still_reachable_through_the_patched_name():
+    """Generated code reaches members off the module-level name, not only the class."""
+    sdk_patches = _load_sdk_patches()
+    package = sorted(set(veeam_br_versions.values()))[0]
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "job_state_model")
+    before = module.EJobType.BACKUP
+
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    assert module.EJobType.BACKUP is before, "member access must pass through unchanged"
+
+
+def test_the_enum_class_itself_is_left_alone():
+    """The stand-in must not leak: the enum is shared by every module that imports it."""
+    sdk_patches = _load_sdk_patches()
+    package = sorted(set(veeam_br_versions.values()))[0]
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    defining_module = _fresh_model_module(package, "e_job_type")
+    real = defining_module.EJobType
+
+    sdk_patches.patch_null_values(defining_module, unset)
+
+    assert defining_module.EJobType is real, "an enum's own module keeps the real class"
+
+
+# ---------------------------------------------------------------------------
+# A payload that is not an object at all — named rather than made tolerant (#80, #104)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ["Unauthorized", ["a"], 42],
+    ids=["error-string", "list", "number"],
+)
+def test_a_non_object_payload_is_reported_with_the_model_and_the_value(payload):
+    """dict("Unauthorized") says only "sequence element #0 has length 1" (#80, #104)."""
+    sdk_patches = _load_sdk_patches()
+    package = sorted(set(veeam_br_versions.values()))[0]
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "job_states_result")
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    with pytest.raises(TypeError) as raised:
+        module.JobStatesResult.from_dict(payload)
+
+    message = str(raised.value)
+    assert "JobStatesResult" in message, "the model must be named"
+    assert type(payload).__name__ in message
+    assert repr(payload) in message, "the offending value must be quoted"
+
+
+def test_a_huge_non_object_payload_is_truncated():
+    """A whole response body — or a credential inside one — must not reach the log."""
+    sdk_patches = _load_sdk_patches()
+    package = sorted(set(veeam_br_versions.values()))[0]
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "job_states_result")
+    sdk_patches.patch_null_values(module, unset)
+
+    with pytest.raises(TypeError) as raised:
+        module.JobStatesResult.from_dict("x" * 10_000)
+
+    assert len(str(raised.value)) < sdk_patches.UNEXPECTED_PAYLOAD_CHARS + 200
+    assert str(raised.value).endswith("...")

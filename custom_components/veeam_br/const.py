@@ -152,8 +152,11 @@ API_FEATURE_REQUIREMENTS = {
     "license_data": "api.license_",
     "server_data": "api.service",
     "proxy_data": "api.proxies",
-    "proxy_enable_button": "api.proxies",
-    "proxy_disable_button": "api.proxies",
+    # Proxy state (online/disabled/out-of-date) and the enable/disable operations:
+    # API 1.3-rev0 (VBR 13) and newer only
+    "proxy_state_data": "api.proxies.get_all_proxies_states",
+    "proxy_enable_button": "api.proxies.enable_proxy",
+    "proxy_disable_button": "api.proxies.disable_proxy",
     "wan_accelerator_data": "api.wan_accelerators",
     # High Availability cluster: API 1.3-rev2 (VBR 13.1) and newer only
     "ha_cluster_data": "api.high_availability_ha_cluster",

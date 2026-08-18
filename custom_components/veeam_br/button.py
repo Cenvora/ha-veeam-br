@@ -176,7 +176,9 @@ async def async_setup_entry(
                     )
 
         # ---- PROXY BUTTONS - a proxy can be taken out of service without deleting it ----
-        if check_api_feature_availability(api_version, "api.proxies"):
+        # enable_proxy/disable_proxy arrived in 1.3-rev0; api.proxies alone is not enough,
+        # since older versions expose the namespace without those two operations (#104)
+        if check_api_feature_availability(api_version, "api.proxies.enable_proxy"):
             for proxy in coordinator.data.get("proxies", []):
                 proxy_id = proxy.get("id")
                 if not proxy_id or proxy_id in added_proxy_ids:

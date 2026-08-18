@@ -40,6 +40,11 @@ PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.B
 # High Availability cluster endpoints exist only from API 1.3-rev2 (VBR 13.1)
 HA_CLUSTER_FEATURE = "api.high_availability_ha_cluster"
 
+# The proxy states endpoint arrived in API 1.3-rev0 (VBR 13). On 1.2-rev1 and older only
+# the configuration endpoint exists, so online/disabled/out-of-date are simply unknown
+# there rather than the whole proxy fetch failing (issue #104).
+PROXY_STATES_FEATURE = "api.proxies.get_all_proxies_states"
+
 
 def _bool_or_none(obj, name: str) -> bool | None:
     """Read a boolean off a model, mapping UNSET and anything unexpected to None."""
@@ -449,6 +454,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ha_cluster_supported = check_api_feature_availability(api_version, HA_CLUSTER_FEATURE)
     _LOGGER.debug("HA cluster endpoints available on %s: %s", api_version, ha_cluster_supported)
 
+    proxy_states_supported = check_api_feature_availability(api_version, PROXY_STATES_FEATURE)
+    proxies_endpoint = "get_all_proxies_states" if proxy_states_supported else "get_all_proxies"
+    _LOGGER.debug("Proxy states endpoint available on %s: %s", api_version, proxy_states_supported)
+
     api_endpoints = [
         "jobs.get_all_jobs_states",
         "service.get_server_info",
@@ -456,7 +465,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "repositories.get_all_repositories",
         "repositories.get_all_repositories_states",
         "repositories.get_all_scale_out_repositories",
-        "proxies.get_all_proxies_states",
+        f"proxies.{proxies_endpoint}",
         "wan_accelerators.get_all_wan_accelerators",
     ]
     if ha_cluster_supported:
@@ -923,11 +932,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Total SOBRs added to coordinator data: %d", len(sobr_list))
 
             # Fetch backup proxies. The states endpoint carries the configuration this needs
-            # as well as online/disabled/out-of-date, so one call covers both.
+            # as well as online/disabled/out-of-date, so one call covers both — where it
+            # exists. Before 1.3-rev0 there is only the configuration endpoint, and the
+            # three state fields read back as None (issue #104).
             proxies_list = []
             try:
                 proxies_api = await asyncio.to_thread(veeam_client.api, "proxies")
-                proxies_result = await veeam_client.call(proxies_api.get_all_proxies_states)
+                proxies_result = await veeam_client.call(getattr(proxies_api, proxies_endpoint))
 
                 for proxy in getattr(proxies_result, "data", None) or []:
                     try:
