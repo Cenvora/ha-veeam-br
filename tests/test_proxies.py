@@ -1,8 +1,10 @@
 """Tests for backup proxy and WAN accelerator support.
 
 Proxy figures come from get_all_proxies_states, which carries both the configuration and the
-live state, so one call feeds every proxy entity. WAN accelerators have no states endpoint, so
-those entities are configuration only.
+live state, so one call feeds every proxy entity — on API 1.3-rev0 and newer. Older servers
+have only get_all_proxies, so there the proxies are configuration only and the state entities
+are not created. WAN accelerators have no states endpoint on any version, so those entities
+are configuration only throughout.
 """
 
 import importlib.util
@@ -46,7 +48,33 @@ def test_proxies_are_fetched_from_the_states_endpoint():
     source = INIT_PATH.read_text(encoding="utf-8")
 
     assert "get_all_proxies_states" in source
-    assert "proxies.get_all_proxies_states" in source, "should be pre-imported like the others"
+    assert 'f"proxies.{proxies_endpoint}"' in source, "should be pre-imported like the others"
+
+
+def test_proxy_endpoint_falls_back_when_states_is_missing():
+    """The states endpoint arrived in 1.3-rev0; before that only get_all_proxies exists.
+
+    Asking for it anyway raised ModuleNotFoundError on every poll and lost the proxy
+    entities entirely on VBR 12.x (issue #104).
+    """
+    source = INIT_PATH.read_text(encoding="utf-8")
+
+    assert 'PROXY_STATES_FEATURE = "api.proxies.get_all_proxies_states"' in source
+    assert "check_api_feature_availability(api_version, PROXY_STATES_FEATURE)" in source
+    assert '"get_all_proxies_states" if proxy_states_supported else "get_all_proxies"' in source
+    assert "getattr(proxies_api, proxies_endpoint)" in source
+
+
+@pytest.mark.parametrize(
+    "package,expected",
+    [("veeam_br.v1_2_rev1", False), ("veeam_br.v1_3_rev0", True)],
+)
+def test_states_endpoint_presence_matches_what_the_fallback_assumes(package, expected):
+    """The fallback is only correct if 1.2-rev1 really lacks the endpoint and 1.3 has it."""
+    pytest.importorskip(package, reason="veeam-br not installed")
+
+    found = importlib.util.find_spec(f"{package}.api.proxies.get_all_proxies_states")
+    assert (found is not None) is expected
 
 
 def test_proxy_state_flags_are_read_as_booleans_or_unknown():
@@ -96,11 +124,25 @@ def test_both_kinds_reach_the_coordinator_payload():
 
 
 def test_entities_are_gated_on_the_endpoint_existing():
-    """Neither endpoint is present in every API revision the library ships."""
+    """Neither endpoint is present in every API revision the library ships.
+
+    The proxy binary sensors read state fields that only the states endpoint returns, and
+    the enable/disable buttons call operations that arrived with it, so both are gated on
+    that endpoint rather than on the api.proxies namespace — which exists further back and
+    would leave three permanently unknown sensors and two failing buttons (issue #104).
+    """
     sensor_source = SENSOR_PATH.read_text(encoding="utf-8")
     binary_source = BINARY_PATH.read_text(encoding="utf-8")
+    button_source = BUTTON_PATH.read_text(encoding="utf-8")
 
-    assert 'check_api_feature_availability(api_version, "api.proxies")' in binary_source
+    assert (
+        'check_api_feature_availability(api_version, "api.proxies.get_all_proxies_states")'
+        in binary_source
+    )
+    assert (
+        'check_api_feature_availability(api_version, "api.proxies.enable_proxy")'
+        in button_source
+    )
     assert 'check_api_feature_availability(api_version, "api.wan_accelerators")' in sensor_source
 
 

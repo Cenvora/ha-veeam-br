@@ -101,7 +101,10 @@ async def async_setup_entry(
                 )
                 added_repository_ids.add(repo_id)
 
-        if check_api_feature_availability(api_version, "api.proxies"):
+        # All three of these read fields that only the proxy states endpoint returns, and
+        # that endpoint arrived in 1.3-rev0 — on an older server they would be permanently
+        # unknown, so the entities are not created at all (issue #104).
+        if check_api_feature_availability(api_version, "api.proxies.get_all_proxies_states"):
             for proxy in coordinator.data.get("proxies", []):
                 proxy_id = proxy.get("id")
                 if not proxy_id or proxy_id in added_proxy_ids:
