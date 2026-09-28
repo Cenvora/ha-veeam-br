@@ -38,6 +38,7 @@ from .const import (
     FEATURE_MANAGE_MOVE_COPY,
     FEATURE_MOVE_COPY_SESSIONS,
     FEATURE_PROXY_STATES,
+    FEATURE_RECOVERY_APPLIANCES,
     PAGE_LIMIT,
     REQUEST_TIMEOUT,
     UPDATE_INTERVAL,
@@ -58,10 +59,12 @@ from .malware import (
     parse_object,
     summarize_objects,
 )
-from .move_copy import EVENT_MOVE_COPY, NewSessionTracker, parse_session, summarize_sessions
+from .move_copy import EVENT_MOVE_COPY, parse_session, summarize_sessions
 from .pruning import async_prune_stale
+from .recovery_appliances import EVENT_RECOVERY_APPLIANCE, parse_appliance, summarize_appliances
 from .sdk_patches import patch_models as patch_null_values_in_models
 from .services import async_setup_services
+from .tracking import NewItemTracker, with_iso_times
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,6 +95,7 @@ ENDPOINT_LABELS = {
     "malware_events": "malware events",
     "malware_objects": "malware detection objects",
     "move_copy_sessions": "move/copy sessions awaiting action",
+    "recovery_appliances": "recovery appliances",
 }
 
 # Repository types that have no immutability of their own. Their Immutable sensor reads
@@ -581,6 +585,7 @@ def _prepare_sdk(api_version: str, api_module: str) -> Any:
         FEATURE_MALWARE_OBJECTS,
         FEATURE_MOVE_COPY_SESSIONS,
         FEATURE_MANAGE_MOVE_COPY,
+        FEATURE_RECOVERY_APPLIANCES,
     ):
         if check_api_feature_availability(api_version, feature):
             modules.append(f"{package}.{feature}")
@@ -679,9 +684,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     malware_tracker = MalwareEventTracker()
 
     move_copy_supported = check_api_feature_availability(api_version, FEATURE_MOVE_COPY_SESSIONS)
-    move_copy_tracker = NewSessionTracker()
+    move_copy_tracker = NewItemTracker()
     # Cleared when the server refuses the account (Backup Administrator only), until a reload
     move_copy_permitted = True
+
+    recovery_appliances_supported = check_api_feature_availability(
+        api_version, FEATURE_RECOVERY_APPLIANCES
+    )
+    recovery_appliance_tracker = NewItemTracker()
 
     proxy_states_supported = check_api_feature_availability(api_version, FEATURE_PROXY_STATES)
     proxies_endpoint = "get_all_proxies_states" if proxy_states_supported else "get_all_proxies"
@@ -1318,8 +1328,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 sessions.append(parsed)
 
         for session in move_copy_tracker.update(sessions):
-            hass.bus.async_fire(EVENT_MOVE_COPY, {"entry_id": entry.entry_id, **session})
+            hass.bus.async_fire(
+                EVENT_MOVE_COPY, {"entry_id": entry.entry_id, **with_iso_times(session)}
+            )
         return summarize_sessions(sessions)
+
+    async def fetch_recovery_appliances() -> dict:
+        """Agent recovery appliances known to the server (1.3-rev2), connected or not."""
+        agents_api = veeam_client.api("agents")
+        appliances = []
+        for item in await fetch_all(
+            agents_api.get_agents_recovery_appliances, "recovery appliances"
+        ):
+            try:
+                parsed = parse_appliance(item, get_enum_value, get_uuid_value, get_datetime_value)
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning("Failed to parse a recovery appliance: %s", describe_error(err))
+                continue
+            if parsed is not None:
+                appliances.append(parsed)
+
+        connected = [appliance for appliance in appliances if appliance["connected"]]
+        for appliance in recovery_appliance_tracker.update(connected):
+            hass.bus.async_fire(
+                EVENT_RECOVERY_APPLIANCE,
+                {"entry_id": entry.entry_id, **with_iso_times(appliance)},
+            )
+        return summarize_appliances(appliances)
 
     async def fetch_malware_objects() -> dict:
         """The objects currently marked Infected or Suspicious (1.3-rev2)."""
@@ -1387,6 +1422,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         else:
             move_copy_sessions, fetch_ok["move_copy_sessions"] = None, True
+        if recovery_appliances_supported:
+            recovery_appliances = await run("recovery_appliances", fetch_recovery_appliances, None)
+        else:
+            recovery_appliances, fetch_ok["recovery_appliances"] = None, True
 
         if isinstance(repositories_result, tuple):
             repositories, fetch_ok["repository_states"] = repositories_result
@@ -1418,6 +1457,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "malware_events": malware_events,
             "malware_objects": malware_objects,
             "move_copy_sessions": move_copy_sessions,
+            "recovery_appliances": recovery_appliances,
             "fetch_ok": fetch_ok,
             "diagnostics": {
                 "connected": True,

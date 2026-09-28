@@ -147,6 +147,8 @@ class FakeServer:
             ),
             ("repositories", "get_all_scale_out_repositories"): paged([]),
             ("proxies", "get_all_proxies_states"): paged([]),
+            # 1.2-rev1 has no proxy states endpoint
+            ("proxies", "get_all_proxies"): paged([]),
             ("wan_accelerators", "get_all_wan_accelerators"): paged([]),
             ("high_availability_ha_cluster", "get_high_availability_cluster"): error(
                 400, "HA cluster is not configured", "NotFound"
@@ -154,6 +156,7 @@ class FakeServer:
             ("malware_detection", "view_suspicious_activity_events"): paged([]),
             ("malware_detection", "get_malware_detection_objects"): paged([]),
             ("backups", "get_move_copy_sessions"): [],
+            ("agents", "get_agents_recovery_appliances"): paged([]),
         }
 
     def handle(self, namespace: str, operation: str, kwargs: dict) -> Any:

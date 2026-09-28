@@ -18,6 +18,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from .tracking import time_key, with_iso_times
+
 # Fired on the Home Assistant bus for every session first seen awaiting action after startup
 EVENT_MOVE_COPY = "veeam_br_move_copy_action_required"
 
@@ -51,14 +53,13 @@ def parse_session(
     job_id = get_uuid_value(getattr(session, "job_id", None))
     result = getattr(session, "result", None)
     progress = getattr(session, "progress_percent", None)
-    created = get_datetime_value(getattr(session, "creation_time", None))
     return {
         "id": session_id,
         "name": _text(getattr(session, "name", None)),
         "type": get_enum_value(getattr(session, "session_type", None), None),
         "job_id": job_id,
         "job_name": job_names.get(job_id) if job_id else None,
-        "created": created.isoformat() if created else None,
+        "created": get_datetime_value(getattr(session, "creation_time", None)),
         "progress": (
             progress if isinstance(progress, int) and not isinstance(progress, bool) else None
         ),
@@ -74,23 +75,8 @@ def _text(value: Any) -> str | None:
 
 def summarize_sessions(sessions: list[dict[str, Any]]) -> dict[str, Any]:
     """The count, and the oldest-waiting sessions first — those most in need of a decision."""
-    ordered = sorted(sessions, key=lambda session: session.get("created") or "")
-    return {"count": len(sessions), "sessions": ordered[:SESSIONS_LISTED]}
-
-
-class NewSessionTracker:
-    """Which sessions have been seen awaiting action, across polls.
-
-    The first poll's sessions were already waiting before startup: they are remembered, not
-    announced, so a restart does not refire them. After that, a session not seen before is
-    new. Only the current IDs are kept, which is all the endpoint can return again.
-    """
-
-    def __init__(self) -> None:
-        self._seen: set[str] | None = None
-
-    def update(self, sessions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        ids = {session["id"] for session in sessions}
-        new = [] if self._seen is None else [s for s in sessions if s["id"] not in self._seen]
-        self._seen = ids
-        return new
+    ordered = sorted(sessions, key=time_key("created"))
+    return {
+        "count": len(sessions),
+        "sessions": [with_iso_times(session) for session in ordered[:SESSIONS_LISTED]],
+    }
