@@ -7,43 +7,103 @@ from datetime import timedelta, timezone
 import importlib
 import logging
 import sys
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
+from homeassistant.util.ssl import get_default_context, get_default_no_verify_context
+import httpx
+from veeam_br.client import VeeamClient
+from veeam_br.exceptions import VeeamAuthenticationError, VeeamSessionError
 
-from .api_version import async_resolve_api_version
+from .api_version import ServerUnreachableError, async_resolve_api_version
 from .const import (
     API_VERSIONS,
     AUTO_API_VERSION,
     CONF_API_VERSION,
     CONF_VERIFY_SSL,
-    DEFAULT_API_MODULE,
+    CONNECT_TIMEOUT,
     DEFAULT_API_VERSION,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
+    FEATURE_HA_CLUSTER,
+    FEATURE_PROXY_STATES,
+    PAGE_SIZE,
+    REQUEST_TIMEOUT,
     UPDATE_INTERVAL,
+    UPDATE_TIMEOUT,
     check_api_feature_availability,
-    configured_api_version,
+    warm_feature_cache,
 )
-from .display import humanize
+from .display import describe_error, humanize
 from .licensing import describe_license, unsupported_license_reason
+from .pruning import async_prune_stale
 from .sdk_patches import patch_models as patch_null_values_in_models
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.BUTTON]
 
-# High Availability cluster endpoints exist only from API 1.3-rev2 (VBR 13.1)
-HA_CLUSTER_FEATURE = "api.high_availability_ha_cluster"
+# Failures to reach the server at all, as veeam-br lets them through. TimeoutError is an
+# OSError, so it is covered too.
+TRANSPORT_ERRORS = (httpx.HTTPError, OSError)
 
-# The proxy states endpoint arrived in API 1.3-rev0 (VBR 13). On 1.2-rev1 and older only
-# the configuration endpoint exists, so online/disabled/out-of-date are simply unknown
-# there rather than the whole proxy fetch failing (issue #104).
-PROXY_STATES_FEATURE = "api.proxies.get_all_proxies_states"
+# Safety stop for paging: a server whose pagination never adds up must not loop forever
+MAX_PAGES = 100
+
+# Coordinator data keys, one per endpoint, as reported in data["fetch_ok"]. The platforms
+# and the pruning read these to tell "the server no longer reports it" from "this cycle's
+# fetch failed".
+ENDPOINT_LABELS = {
+    "jobs": "jobs",
+    "server_info": "server info",
+    "license_info": "license info",
+    "repositories": "repositories",
+    "repository_states": "repository states",
+    "sobrs": "scale-out repositories",
+    "proxies": "proxies",
+    "wan_accelerators": "WAN accelerators",
+    "ha_cluster": "HA cluster",
+}
+
+# Repository types that have no immutability of their own. Their Immutable sensor reads
+# "off" instead of unknown. Types not listed — deduplicating appliances, object storage — are
+# only reported when the server says so. Compared case-insensitively against the raw type.
+NON_IMMUTABLE_REPOSITORY_TYPES = frozenset({"winlocal", "smb", "nfs"})
+
+
+class UnexpectedResponseError(Exception):
+    """An endpoint answered, but not with the data it documents.
+
+    The generated clients return an Error model for a documented failure and None for an
+    undocumented status rather than raising, so without this those read as an empty list.
+    """
+
+
+def _describe_response(result: Any) -> str:
+    """Explain an endpoint result that is not the documented data."""
+    if result is None:
+        return "no data (the server answered with an undocumented status)"
+
+    message = getattr(result, "message", None)
+    code = getattr(result, "error_code", None)
+    code = getattr(code, "value", code)
+    extras = getattr(result, "additional_properties", None) or {}
+    status = extras.get("status") if isinstance(extras, dict) else None
+
+    parts = [type(result).__name__]
+    if status:
+        parts.append(f"HTTP {status}")
+    if isinstance(code, str) and code:
+        parts.append(code)
+    if isinstance(message, str) and message:
+        parts.append(message)
+    return ": ".join(parts)
 
 
 def _bool_or_none(obj, name: str) -> bool | None:
@@ -157,6 +217,12 @@ def _license_datetime(license_data, field: str):
     1.3-rev* those fields are gone from the top level and live only inside the per-package
     summary (instanceLicenseSummary, socketLicenseSummary), so reading the top level alone
     leaves the sensor unknown on any 13.x server.
+
+    A 1.3 server that still sends a top-level date has it land in additional_properties as a
+    raw string, since the 1.3 model no longer declares the field; that is read last.
+
+    None means the server reported the date nowhere — normal for a license with no support
+    contract, such as NFR or evaluation, which has no support expiration at all.
     """
     direct = getattr(license_data, field, None)
     if not _is_unset(direct):
@@ -169,6 +235,15 @@ def _license_datetime(license_data, field: str):
         value = getattr(summary, field, None)
         if not _is_unset(value):
             return value
+
+    extras = getattr(license_data, "additional_properties", None)
+    if isinstance(extras, dict):
+        head, *rest = field.split("_")
+        raw = extras.get(head + "".join(word.capitalize() for word in rest))
+        if isinstance(raw, str) and raw:
+            parsed = dt_util.parse_datetime(raw)
+            if parsed is not None:
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
     return None
 
@@ -254,6 +329,65 @@ def _cluster_absent_reason(result) -> tuple[bool, str]:
 
     detail = f"HTTP {status_code}: {message}" if status_code else message
     return False, detail or type(result).__name__
+
+
+def _repository_immutability(type_raw, extras) -> tuple[bool | None, int | None]:
+    """Whether a repository keeps backups immutable, and for how many days.
+
+    Veeam reports this in a different place for each kind of repository, all of them in the
+    polymorphic part of the payload that lands in additional_properties:
+
+    * object storage: ``bucket.immutability`` (or ``container.immutability``) with
+      ``isEnabled`` and ``daysCount``
+    * Linux hardened: ``repository.makeRecentBackupsImmutableDays``
+    * Linux local on 13.x: ``repository.enableGovernanceMode`` and
+      ``governanceModeRetentionDays``
+    * Data Domain and StoreOnce: ``repository.immutability``
+
+    Windows, SMB and NFS repositories have no immutability at all, so they report False
+    rather than unknown. Anything else unreported stays unknown.
+    """
+    extras = extras if isinstance(extras, dict) else {}
+
+    def from_block(block) -> tuple[bool | None, int | None]:
+        if not isinstance(block, dict) or block.get("isEnabled") is None:
+            return None, None
+        enabled = bool(block["isEnabled"])
+        days = block.get("daysCount") if enabled else None
+        return enabled, days if isinstance(days, int) and not isinstance(days, bool) else None
+
+    for storage_key in ("bucket", "container"):
+        storage = extras.get(storage_key)
+        if isinstance(storage, dict):
+            enabled, days = from_block(storage.get("immutability"))
+            if enabled is not None:
+                return enabled, days
+
+    settings = extras.get("repository")
+    if isinstance(settings, dict):
+        hardened_days = settings.get("makeRecentBackupsImmutableDays")
+        if isinstance(hardened_days, (int, float)) and not isinstance(hardened_days, bool):
+            days = int(hardened_days)
+            return days > 0, days if days > 0 else None
+
+        governance = settings.get("enableGovernanceMode")
+        if isinstance(governance, bool):
+            days = settings.get("governanceModeRetentionDays") if governance else None
+            return governance, days if isinstance(days, int) else None
+
+        enabled, days = from_block(settings.get("immutability"))
+        if enabled is not None:
+            return enabled, days
+
+    type_key = type_raw.lower() if isinstance(type_raw, str) else ""
+    if type_key in NON_IMMUTABLE_REPOSITORY_TYPES:
+        return False, None
+    if type_key == "linuxlocal":
+        # Before 13.x a plain Linux repository had no immutability; from 13.x it reports
+        # enableGovernanceMode, which is handled above
+        return False, None
+
+    return None, None
 
 
 # Device identifier prefixes, mapped to the coordinator data that keeps them alive
@@ -367,48 +501,25 @@ def _check_license_support(hass: HomeAssistant, entry: ConfigEntry, data: dict |
     )
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Veeam Backup & Replication from a config entry."""
-    from veeam_br.client import VeeamClient
+def _prepare_sdk(api_version: str, api_module: str) -> Any:
+    """Import everything the coordinator and the platforms use, then patch the models.
 
-    # "auto" is stored as the user's intent, not a version, so it is resolved on every setup
-    # — which means a restart picks up a server upgrade or a newer veeam-br automatically.
-    stored_version = entry.options.get(
-        CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
-    )
-    if stored_version == AUTO_API_VERSION:
-        api_version = await async_resolve_api_version(
-            {**entry.data, CONF_API_VERSION: AUTO_API_VERSION}
-        )
-        _LOGGER.info(
-            "API version is set to auto; using %s for %s", api_version, entry.data[CONF_HOST]
-        )
-    else:
-        api_version = stored_version
+    Blocking — imports read the filesystem — so it runs in an executor, as one job to keep
+    setup lean. veeam-br resolves modules with importlib at call time, which would otherwise
+    land on the event loop. Returns the SDK's UNSET sentinel.
 
-    api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
+    Importing any endpoint imports the whole models package, so patching every model costs
+    nothing extra. The patch teaches them to tolerate nulls and unknown enum values where
+    Veeam's schema promises otherwise; without it a single null timestamp, UUID or nested
+    object empties a whole endpoint (issues #82 and #83).
+    """
+    package = f"veeam_br.{api_module}"
+    unset = importlib.import_module(f"{package}.types").UNSET
 
-    # Import UNSET type for proper type checking
+    models_package = f"{package}.models"
+    importlib.import_module(models_package)  # imports every model module eagerly
     try:
-        types_module = await asyncio.to_thread(
-            importlib.import_module, f"veeam_br.{api_module}.types"
-        )
-        UNSET = types_module.UNSET
-    except ImportError as err:
-        _LOGGER.error("Failed to import veeam_br types: %s", err)
-        return False
-
-    # Teach the generated models to tolerate nulls where Veeam's schema promises a value,
-    # before anything parses a response. Without this a single null timestamp, UUID or
-    # nested object empties a whole endpoint (issues #82 and #83). Importing the models
-    # package blocks, so this runs off the event loop.
-    def patch_models() -> int:
-        models_package = f"veeam_br.{api_module}.models"
-        importlib.import_module(models_package)  # imports every model module eagerly
-        return patch_null_values_in_models(models_package, UNSET, sys.modules)
-
-    try:
-        patched = await asyncio.to_thread(patch_models)
+        patched = patch_null_values_in_models(models_package, unset, sys.modules)
         _LOGGER.debug("Patched %d model modules to tolerate null values", patched)
     except Exception as err:  # noqa: BLE001 - never block setup over a resilience patch
         _LOGGER.warning(
@@ -418,719 +529,750 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             err,
         )
 
-    # Pre-import API modules to avoid blocking calls in event loop
-    # The veeam_br library uses dynamic imports which can block the event loop
-    try:
-        await asyncio.to_thread(
-            importlib.import_module, f"veeam_br.{api_module}.api.login.create_token"
-        )
-    except ImportError as err:
-        _LOGGER.warning("Failed to pre-import login module: %s", err)
+    warm_feature_cache(api_version)
+    proxies_endpoint = (
+        "get_all_proxies_states"
+        if check_api_feature_availability(api_version, FEATURE_PROXY_STATES)
+        else "get_all_proxies"
+    )
 
+    modules = [
+        f"{package}.client",
+        f"{package}.api.login.create_token",
+        f"{package}.models.token_login_spec",
+        f"{package}.models.e_login_grant_type",
+        f"{package}.api.jobs.get_all_jobs_states",
+        f"{package}.api.service.get_server_info",
+        f"{package}.api.license_.get_installed_license",
+        f"{package}.api.repositories.get_all_repositories",
+        f"{package}.api.repositories.get_all_repositories_states",
+        f"{package}.api.repositories.get_all_scale_out_repositories",
+        f"{package}.api.proxies.{proxies_endpoint}",
+        f"{package}.api.wan_accelerators.get_all_wan_accelerators",
+    ]
+    if check_api_feature_availability(api_version, FEATURE_HA_CLUSTER):
+        modules.append(f"{package}.api.high_availability_ha_cluster.get_high_availability_cluster")
+
+    for module in modules:
+        try:
+            importlib.import_module(module)
+        except ImportError as err:
+            _LOGGER.debug("Could not pre-import %s: %s", module, err)
+
+    return unset
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Veeam Backup & Replication from a config entry."""
     host = entry.data[CONF_HOST]
     port = entry.data[CONF_PORT]
     base_url = f"https://{host}:{port}"
+    verify_ssl = entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
 
-    # Create VeeamClient directly - it handles token rotation automatically
+    # "auto" is stored as the user's intent, not a version, so it is resolved on every setup
+    # — which means a restart picks up a server upgrade or a newer veeam-br automatically.
+    stored_version = entry.options.get(
+        CONF_API_VERSION, entry.data.get(CONF_API_VERSION, DEFAULT_API_VERSION)
+    )
+    if stored_version == AUTO_API_VERSION:
+        try:
+            async with asyncio.timeout(CONNECT_TIMEOUT):
+                api_version = await async_resolve_api_version(
+                    hass, {**entry.data, CONF_API_VERSION: AUTO_API_VERSION}
+                )
+        except (ServerUnreachableError, TimeoutError) as err:
+            # Falling back to the default here would pin the entry to a revision chosen while
+            # the server was down; retrying is the only answer that detects the right one
+            raise ConfigEntryNotReady(
+                f"Could not reach {host}:{port} to detect its API version: "
+                f"{describe_error(err)}"
+            ) from err
+        _LOGGER.info("API version is set to auto; using %s for %s", api_version, host)
+    else:
+        api_version = stored_version
+
+    if api_version not in API_VERSIONS:
+        # A pinned revision the installed veeam-br no longer ships. Retrying cannot help;
+        # the options flow lists what is available.
+        raise ConfigEntryError(
+            f"API version {api_version} is not supported by the installed veeam-br "
+            f"(supported: {', '.join(API_VERSIONS)}). Choose another in the integration's "
+            "options"
+        )
+    api_module = API_VERSIONS[api_version]
+
+    try:
+        UNSET = await hass.async_add_executor_job(_prepare_sdk, api_version, api_module)
+    except ImportError as err:
+        raise ConfigEntryError(f"Failed to import veeam_br {api_module}: {err}") from err
+
+    # A ready-made context: building one loads the CA bundle, which blocks the event loop
+    ssl_context = get_default_context() if verify_ssl else get_default_no_verify_context()
+
+    # VeeamClient handles token refresh itself, and applies the timeout to every request
     veeam_client = VeeamClient(
         host=base_url,
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
         api_version=api_version,
-        verify_ssl=entry.data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+        verify_ssl=ssl_context,
+        timeout=REQUEST_TIMEOUT,
     )
 
-    # Connect to Veeam API
     try:
-        await veeam_client.connect()
-    except Exception as err:
-        _LOGGER.error("Failed to connect to Veeam API: %s", err)
-        return False
+        async with asyncio.timeout(CONNECT_TIMEOUT):
+            await veeam_client.connect()
+    except VeeamAuthenticationError as err:
+        await veeam_client.close()
+        raise ConfigEntryAuthFailed(f"Veeam rejected the credentials for {host}: {err}") from err
+    except Exception as err:  # transport errors, timeouts, anything else: try again later
+        await veeam_client.close()
+        raise ConfigEntryNotReady(
+            f"Could not log in to {host}:{port}: {describe_error(err)}"
+        ) from err
 
-    # Pre-import API endpoint modules to avoid blocking calls in event loop
-    # The veeam_br library dynamically imports these modules during API calls
-    # High Availability arrived in 1.3-rev2; on older versions the endpoints are not in the
-    # SDK at all, so skip the call rather than fail it on every poll
-    ha_cluster_supported = check_api_feature_availability(api_version, HA_CLUSTER_FEATURE)
+    ha_cluster_supported = check_api_feature_availability(api_version, FEATURE_HA_CLUSTER)
     _LOGGER.debug("HA cluster endpoints available on %s: %s", api_version, ha_cluster_supported)
 
-    proxy_states_supported = check_api_feature_availability(api_version, PROXY_STATES_FEATURE)
+    proxy_states_supported = check_api_feature_availability(api_version, FEATURE_PROXY_STATES)
     proxies_endpoint = "get_all_proxies_states" if proxy_states_supported else "get_all_proxies"
     _LOGGER.debug("Proxy states endpoint available on %s: %s", api_version, proxy_states_supported)
 
-    api_endpoints = [
-        "jobs.get_all_jobs_states",
-        "service.get_server_info",
-        "license_.get_installed_license",
-        "repositories.get_all_repositories",
-        "repositories.get_all_repositories_states",
-        "repositories.get_all_scale_out_repositories",
-        f"proxies.{proxies_endpoint}",
-        "wan_accelerators.get_all_wan_accelerators",
-    ]
-    if ha_cluster_supported:
-        api_endpoints.append("high_availability_ha_cluster.get_high_availability_cluster")
-    for endpoint in api_endpoints:
+    # Endpoints currently failing, so a persistent failure is logged when it starts and when
+    # it ends rather than on every poll
+    failing_endpoints: dict[str, str] = {}
+    # Repositories already reported as missing from the states response
+    stateless_repositories: set[str] = set()
+
+    # Helper function to safely get enum value
+    def get_enum_value(enum_val, default="unknown"):
+        """Extract enum value, handling enum members, unknown values kept as str, and UNSET."""
+        if enum_val is None or enum_val is UNSET:
+            return default
+        # Enum members, and UnknownEnumValue from sdk_patches, both answer .value
+        if hasattr(enum_val, "value"):
+            return enum_val.value
+        return str(enum_val)
+
+    # Helper function to safely get datetime
+    def get_datetime_value(dt_val):
+        """Extract datetime value, handling UNSET."""
+        if dt_val is None or dt_val is UNSET:
+            return None
+        return dt_val
+
+    # Helper to safely get UUID as string
+    def get_uuid_value(uuid_val):
+        """Extract UUID value."""
+        if uuid_val is None or uuid_val is UNSET:
+            return None
+        return str(uuid_val)
+
+    # Helper to serialize nested objects to dict
+    def serialize_value(value):
+        """Recursively serialize values to JSON-compatible types."""
+        if value is None or value is UNSET:
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {k: serialize_value(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [serialize_value(item) for item in value]
+        # Handle objects with to_dict method
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        # Handle enum types
+        if hasattr(value, "value"):
+            return value.value
+        # Convert remaining types to string as fallback
         try:
-            await asyncio.to_thread(
-                importlib.import_module, f"veeam_br.{api_module}.api.{endpoint}"
+            str_value = str(value)
+            _LOGGER.debug(
+                "Serialized unexpected type %s to string: %s",
+                type(value).__name__,
+                str_value[:50],
             )
-        except ImportError as err:
-            _LOGGER.debug("Could not pre-import %s: %s", endpoint, err)
+            return str_value
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to serialize value of type %s: %s",
+                type(value).__name__,
+                err,
+            )
+            return None
 
-    async def async_update_data():
-        """Fetch data from API."""
-        # Track connection state for diagnostic sensors
-        connected = False
-        health_ok = False
-        last_successful_poll = None
+    async def fetch_all(operation, what: str) -> list:
+        """Every item of a collection endpoint, following pagination.
 
-        try:
-            # VeeamClient handles token refresh automatically in call() method
-            # No need for manual token validation
+        The 1.3 revisions return at most 200 items unless asked for more, and say how many
+        there are in pagination.total. Raises UnexpectedResponseError when a page is not a
+        result at all, so a refused request is not mistaken for an empty collection.
+        """
+        items: list = []
+        skip = 0
+        for _ in range(MAX_PAGES):
+            result = await veeam_client.call(operation, skip=skip, limit=PAGE_SIZE)
+            page = getattr(result, "data", None)
+            if not isinstance(page, list):
+                raise UnexpectedResponseError(
+                    f"{what} endpoint answered {_describe_response(result)}"
+                )
+            items.extend(page)
 
-            # Mark as connected
-            connected = True
+            total = getattr(getattr(result, "pagination", None), "total", None)
+            if not page:
+                break
+            if isinstance(total, int) and not isinstance(total, bool):
+                if len(items) >= total:
+                    break
+            elif len(page) < PAGE_SIZE:
+                break
+            skip += len(page)
+        else:
+            _LOGGER.warning(
+                "Stopped paging %s after %d pages (%d items); the list may be incomplete",
+                what,
+                MAX_PAGES,
+                len(items),
+            )
+        return items
 
-            # Helper function to safely get enum value
-            def get_enum_value(enum_val, default="unknown"):
-                """Extract enum value, handling both enum types and UNSET."""
-                if enum_val is None or enum_val is UNSET:
-                    return default
-                # Try to get enum value
-                if hasattr(enum_val, "value"):
-                    return enum_val.value
-                return str(enum_val)
+    def note_failure(key: str, err: BaseException) -> None:
+        """Log an endpoint failure when it starts; stay quiet while it persists."""
+        detail = describe_error(err)
+        if key not in failing_endpoints:
+            _LOGGER.warning(
+                "Failed to fetch %s: %s. Its entities are unavailable until it recovers",
+                ENDPOINT_LABELS[key],
+                detail,
+            )
+        else:
+            _LOGGER.debug("Still failing to fetch %s: %s", ENDPOINT_LABELS[key], detail)
+        _LOGGER.debug("Fetching %s failed", ENDPOINT_LABELS[key], exc_info=err)
+        failing_endpoints[key] = detail
 
-            # Helper function to safely get datetime
-            def get_datetime_value(dt_val):
-                """Extract datetime value, handling UNSET."""
-                if dt_val is None or dt_val is UNSET:
-                    return None
-                return dt_val
+    def note_success(key: str) -> None:
+        if failing_endpoints.pop(key, None) is not None:
+            _LOGGER.info("Fetching %s works again", ENDPOINT_LABELS[key])
 
-            # Helper to safely get UUID as string
-            def get_uuid_value(uuid_val):
-                """Extract UUID value."""
-                if uuid_val is None or uuid_val is UNSET:
-                    return None
-                return str(uuid_val)
-
-            # Fetch jobs data — wrapped in try/except so a parsing failure (e.g.
-            # an API-version mismatch in the veeam_br library causing a ValueError
-            # from dict()) degrades gracefully rather than aborting the whole setup.
-            jobs_list = []
+    async def fetch_jobs() -> list[dict]:
+        jobs_api = veeam_client.api("jobs")
+        jobs_list = []
+        for job in await fetch_all(jobs_api.get_all_jobs_states, "jobs"):
             try:
-                jobs_api = await asyncio.to_thread(veeam_client.api, "jobs")
-                jobs_response = await veeam_client.call(jobs_api.get_all_jobs_states)
-
-                if not jobs_response or not hasattr(jobs_response, "data"):
+                # A null id parses as UNSET (see sdk_patches); entity unique IDs are built
+                # from it, so skip rather than emit "None" ones
+                job_id = get_uuid_value(job.id)
+                if not job_id:
                     _LOGGER.warning(
-                        "Jobs API returned no data or an unexpected response object (%s); "
-                        "job sensors will be unavailable",
-                        type(jobs_response).__name__,
+                        "Skipping job %s: no usable ID", getattr(job, "name", "Unknown")
                     )
-                else:
-                    jobs_data = jobs_response.data
+                    continue
 
-                    for job in jobs_data:
-                        try:
-                            # A null id parses as UNSET (see sdk_patches); entity unique
-                            # IDs are built from it, so skip rather than emit "None" ones
-                            job_id = get_uuid_value(job.id)
-                            if not job_id:
-                                _LOGGER.warning(
-                                    "Skipping job %s: no usable ID",
-                                    getattr(job, "name", "Unknown"),
-                                )
-                                continue
-
-                            job_dict = {
-                                "id": job_id,
-                                "name": job.name or "Unknown",
-                                "type": humanize(get_enum_value(job.type_), "Unknown"),
-                                "type_raw": get_enum_value(job.type_),
-                                "status": humanize(get_enum_value(job.status), "Unknown"),
-                                "status_raw": get_enum_value(job.status),
-                                "last_result": humanize(get_enum_value(job.last_result), "Unknown"),
-                                "last_result_raw": get_enum_value(job.last_result),
-                                "last_run": get_datetime_value(job.last_run),
-                                "next_run": get_datetime_value(job.next_run),
-                            }
-                            jobs_list.append(job_dict)
-                        except (ValueError, KeyError, AttributeError, TypeError) as err:
-                            job_id = getattr(job, "id", "Unknown")
-                            job_name = getattr(job, "name", "Unknown")
-                            _LOGGER.warning(
-                                "Failed to parse job (id=%s, name=%s): %s",
-                                job_id,
-                                job_name,
-                                err,
-                            )
-                            continue
+                jobs_list.append(
+                    {
+                        "id": job_id,
+                        "name": job.name or "Unknown",
+                        "type": humanize(get_enum_value(job.type_), "Unknown"),
+                        "type_raw": get_enum_value(job.type_),
+                        "status": humanize(get_enum_value(job.status), "Unknown"),
+                        "status_raw": get_enum_value(job.status),
+                        "last_result": humanize(get_enum_value(job.last_result), "Unknown"),
+                        "last_result_raw": get_enum_value(job.last_result),
+                        "last_run": get_datetime_value(job.last_run),
+                        "next_run": get_datetime_value(job.next_run),
+                    }
+                )
             except (ValueError, KeyError, AttributeError, TypeError) as err:
                 _LOGGER.warning(
-                    "Failed to parse jobs API response (API version %s may not be fully "
-                    "compatible): %s",
-                    api_version,
-                    err,
+                    "Failed to parse job (id=%s, name=%s): %s",
+                    getattr(job, "id", "Unknown"),
+                    getattr(job, "name", "Unknown"),
+                    describe_error(err),
                 )
-            except Exception:
-                # Let the top-level coordinator handler wrap this in UpdateFailed once.
-                raise
+        return jobs_list
 
-            # Fetch server information
-            server_info = None
-            try:
-                service_api = await asyncio.to_thread(veeam_client.api, "service")
-                server_data = await veeam_client.call(service_api.get_server_info)
-                if server_data:
-                    server_info = {
-                        "vbr_id": getattr(server_data, "vbr_id", "Unknown"),
-                        "name": getattr(server_data, "name", "Unknown"),
-                        "build_version": getattr(server_data, "build_version", "Unknown"),
-                        "patches": getattr(server_data, "patches", []),
-                        "database_vendor": getattr(server_data, "database_vendor", "Unknown"),
-                        "sql_server_edition": getattr(server_data, "sql_server_edition", "Unknown"),
-                        "sql_server_version": getattr(server_data, "sql_server_version", "Unknown"),
-                        "database_schema_version": getattr(
-                            server_data, "database_schema_version", "Unknown"
-                        ),
-                        "database_content_version": getattr(
-                            server_data, "database_content_version", "Unknown"
-                        ),
-                        "platform": (
-                            server_data.platform.value
-                            if hasattr(server_data, "platform")
-                            and hasattr(server_data.platform, "value")
-                            else str(getattr(server_data, "platform", "Unknown"))
-                        ),
-                    }
-            except (AttributeError, KeyError, TypeError) as err:
-                _LOGGER.warning("Failed to parse server info: %s", err)
-            except Exception as err:
-                _LOGGER.warning("Failed to fetch server info: %s", err)
+    async def fetch_server_info() -> dict:
+        service_api = veeam_client.api("service")
+        server_data = await veeam_client.call(service_api.get_server_info)
+        if not hasattr(server_data, "build_version"):
+            # An Error model is truthy, and reading it with defaults produced a server
+            # device full of "Unknown"
+            raise UnexpectedResponseError(
+                f"server info endpoint answered {_describe_response(server_data)}"
+            )
+        platform = getattr(server_data, "platform", None)
+        return {
+            "vbr_id": getattr(server_data, "vbr_id", "Unknown"),
+            "name": getattr(server_data, "name", "Unknown"),
+            "build_version": getattr(server_data, "build_version", "Unknown"),
+            "patches": getattr(server_data, "patches", []),
+            "database_vendor": getattr(server_data, "database_vendor", "Unknown"),
+            "sql_server_edition": getattr(server_data, "sql_server_edition", "Unknown"),
+            "sql_server_version": getattr(server_data, "sql_server_version", "Unknown"),
+            "database_schema_version": getattr(server_data, "database_schema_version", "Unknown"),
+            "database_content_version": getattr(server_data, "database_content_version", "Unknown"),
+            "platform": (
+                platform.value if hasattr(platform, "value") else str(platform or "Unknown")
+            ),
+        }
 
-            # Fetch license information
-            license_info = None
-            try:
-                license_api = await asyncio.to_thread(veeam_client.api, "license_")
-                license_data = await veeam_client.call(license_api.get_installed_license)
-                if license_data:
-
-                    # Helper function to safely get enum value from object attribute
-                    def get_license_enum_attr(obj, attr_name, default="Unknown"):
-                        """Extract enum value from object attribute, handling both enum types and UNSET."""
-                        attr = getattr(obj, attr_name, None)
-                        if attr is None:
-                            return default
-                        # Check if it's UNSET (from veeam-br library)
-                        if hasattr(attr, "__class__") and attr.__class__.__name__ == "Unset":
-                            return default
-                        # Try to get enum value
-                        if hasattr(attr, "value"):
-                            return attr.value
-                        return str(attr)
-
-                    license_info = {
-                        "status": humanize(
-                            get_license_enum_attr(license_data, "status"), "Unknown"
-                        ),
-                        "status_raw": get_license_enum_attr(license_data, "status"),
-                        "edition": humanize(
-                            get_license_enum_attr(license_data, "edition"), "Unknown"
-                        ),
-                        "edition_raw": get_license_enum_attr(license_data, "edition"),
-                        # Note: type_ with underscore
-                        "type": humanize(get_license_enum_attr(license_data, "type_"), "Unknown"),
-                        "type_raw": get_license_enum_attr(license_data, "type_"),
-                        "expiration_date": _license_datetime(license_data, "expiration_date"),
-                        "support_expiration_date": _license_datetime(
-                            license_data, "support_expiration_date"
-                        ),
-                        "support_id": _license_text(license_data, "support_id"),
-                        "auto_update_enabled": getattr(license_data, "auto_update_enabled", False),
-                        "licensed_to": _license_text(license_data, "licensed_to"),
-                        "cloud_connect": get_license_enum_attr(license_data, "cloud_connect"),
-                        "free_agent_instance_consumption_enabled": getattr(
-                            license_data, "free_agent_instance_consumption_enabled", False
-                        ),
-                        **_license_instance_usage(license_data),
-                    }
-            except (AttributeError, KeyError, TypeError) as err:
-                _LOGGER.warning("Failed to parse license info: %s", err)
-            except Exception as err:
-                _LOGGER.warning("Failed to fetch license info: %s", err)
-
-            # Fetch repositories information
-            repositories_list = []
-            try:
-                # Helper to serialize nested objects to dict
-                def serialize_value(value):
-                    """Recursively serialize values to JSON-compatible types."""
-                    if value is None or value is UNSET:
-                        return None
-                    if isinstance(value, (str, int, float, bool)):
-                        return value
-                    if isinstance(value, dict):
-                        return {k: serialize_value(v) for k, v in value.items()}
-                    if isinstance(value, (list, tuple)):
-                        return [serialize_value(item) for item in value]
-                    # Handle objects with to_dict method
-                    if hasattr(value, "to_dict"):
-                        return value.to_dict()
-                    # Handle enum types
-                    if hasattr(value, "value"):
-                        return value.value
-                    # Convert remaining types to string as fallback
-                    try:
-                        str_value = str(value)
-                        _LOGGER.debug(
-                            "Serialized unexpected type %s to string: %s",
-                            type(value).__name__,
-                            str_value[:50],
-                        )
-                        return str_value
-                    except Exception as err:
-                        _LOGGER.warning(
-                            "Failed to serialize value of type %s: %s",
-                            type(value).__name__,
-                            err,
-                        )
-                        return None
-
-                repositories_api = await asyncio.to_thread(veeam_client.api, "repositories")
-                repositories_result = await veeam_client.call(repositories_api.get_all_repositories)
-                repositories_states_result = await veeam_client.call(
-                    repositories_api.get_all_repositories_states
-                )
-
-                if repositories_result:
-                    repositories_data = repositories_result.data if repositories_result else []
-
-                    _LOGGER.debug("Fetched %d repositories from API", len(repositories_data))
-
-                    # Build states dict for quick lookup by ID
-                    states_by_id = {}
-                    if repositories_states_result:
-                        states_data = (
-                            repositories_states_result.data if repositories_states_result else []
-                        )
-                        for state in states_data:
-                            repo_id = get_uuid_value(getattr(state, "id", None))
-                            if repo_id:
-                                states_by_id[repo_id] = state
-                        _LOGGER.debug("Fetched %d repository states from API", len(states_by_id))
-
-                    for repo in repositories_data:
-                        try:
-                            # See the job loop: entity unique IDs need a usable ID
-                            if not get_uuid_value(repo.id):
-                                _LOGGER.warning(
-                                    "Skipping repository %s: no usable ID",
-                                    getattr(repo, "name", "Unknown"),
-                                )
-                                continue
-
-                            repo_dict = {
-                                "id": get_uuid_value(repo.id),
-                                "name": repo.name or "Unknown",
-                                "description": repo.description or "",
-                                "type": humanize(get_enum_value(repo.type_), "Unknown"),
-                                "type_raw": get_enum_value(repo.type_),
-                                "unique_id": (
-                                    repo.unique_id if repo.unique_id is not UNSET else None
-                                ),
-                            }
-
-                            # Add state information if available
-                            repo_id = repo_dict["id"]
-                            if repo_id in states_by_id:
-                                state = states_by_id[repo_id]
-                                # Add capacity information
-                                repo_dict["capacity_gb"] = getattr(state, "capacity_gb", None)
-                                repo_dict["free_gb"] = getattr(state, "free_gb", None)
-                                repo_dict["used_space_gb"] = getattr(state, "used_space_gb", None)
-                                repo_dict["is_online"] = getattr(state, "is_online", None)
-                                repo_dict["is_out_of_date"] = getattr(state, "is_out_of_date", None)
-
-                            # Extract repository-specific fields from the repo object
-                            # Immutability - from bucket.immutability for S3 repos
-                            # Due to circular inheritance in OpenAPI schema, bucket is in additional_properties
-                            if hasattr(repo, "additional_properties"):
-                                bucket = repo.additional_properties.get("bucket")
-                                _LOGGER.debug(
-                                    "Repository %s: Checking additional_properties, bucket found=%s",
-                                    repo_dict.get("name"),
-                                    bucket is not None,
-                                )
-                                if bucket:
-                                    # bucket is a dict from additional_properties
-                                    immutability = bucket.get("immutability")
-                                    if immutability:
-                                        _LOGGER.debug(
-                                            "Repository %s: immutability found in bucket",
-                                            repo_dict.get("name"),
-                                        )
-                                        # immutability is a dict with isEnabled, daysCount, immutabilityMode
-                                        is_enabled = immutability.get("isEnabled")
-                                        if is_enabled is not None:
-                                            repo_dict["is_immutable"] = bool(is_enabled)
-                                            _LOGGER.info(
-                                                "Repository %s: Set is_immutable=%s",
-                                                repo_dict.get("name"),
-                                                repo_dict["is_immutable"],
-                                            )
-                                            # Extract immutability days count if enabled
-                                            if is_enabled:
-                                                days_count = immutability.get("daysCount")
-                                                if days_count is not None:
-                                                    repo_dict["immutability_days"] = days_count
-                                                    _LOGGER.debug(
-                                                        "Repository %s: immutability_days=%s",
-                                                        repo_dict.get("name"),
-                                                        days_count,
-                                                    )
-
-                                # Immutability for Linux Hardened repos
-                                # stored in additional_properties["repository"]["makeRecentBackupsImmutableDays"]
-                                if "is_immutable" not in repo_dict:
-                                    hlr_repo = repo.additional_properties.get("repository")
-                                    if isinstance(hlr_repo, dict):
-                                        hlr_days = hlr_repo.get("makeRecentBackupsImmutableDays")
-                                        if hlr_days is not None:
-                                            is_immutable = int(hlr_days) > 0
-                                            repo_dict["is_immutable"] = is_immutable
-                                            _LOGGER.info(
-                                                "Repository %s: HLR immutability, makeRecentBackupsImmutableDays=%s, is_immutable=%s",
-                                                repo_dict.get("name"),
-                                                hlr_days,
-                                                is_immutable,
-                                            )
-                                            if is_immutable:
-                                                repo_dict["immutability_days"] = int(hlr_days)
-                                                _LOGGER.debug(
-                                                    "Repository %s: immutability_days=%s",
-                                                    repo_dict.get("name"),
-                                                    hlr_days,
-                                                )
-
-                            # Accessible - use is_online from state as a proxy
-                            repo_dict["is_accessible"] = repo_dict.get("is_online")
-
-                            # Add all additional properties from the API response
-                            if hasattr(repo, "additional_properties"):
-                                for key, value in repo.additional_properties.items():
-                                    repo_dict[key] = serialize_value(value)
-
-                            repositories_list.append(repo_dict)
-                            _LOGGER.debug(
-                                "Successfully parsed repository: %s (type: %s)",
-                                repo_dict.get("name"),
-                                repo_dict.get("type"),
-                            )
-                        except (ValueError, KeyError, AttributeError, TypeError) as err:
-                            _LOGGER.warning(
-                                "Failed to parse repository %s: %s",
-                                getattr(repo, "name", "Unknown"),
-                                err,
-                            )
-                            continue
-            except (AttributeError, KeyError, TypeError) as err:
-                _LOGGER.warning("Failed to parse repositories: %s", err)
-            except Exception as err:
-                _LOGGER.warning("Failed to fetch repositories: %s", err)
-
-            _LOGGER.debug(
-                "Total repositories added to coordinator data: %d", len(repositories_list)
+    async def fetch_license_info() -> dict:
+        license_api = veeam_client.api("license_")
+        license_data = await veeam_client.call(license_api.get_installed_license)
+        if not hasattr(license_data, "status") or not hasattr(license_data, "edition"):
+            raise UnexpectedResponseError(
+                f"license endpoint answered {_describe_response(license_data)}"
             )
 
-            # Fetch Scale-Out Backup Repositories (SOBRs)
-            sobr_list = []
-            try:
-                sobr_api = await asyncio.to_thread(veeam_client.api, "repositories")
-                sobr_result = await veeam_client.call(sobr_api.get_all_scale_out_repositories)
+        def get_license_enum_attr(obj, attr_name, default="Unknown"):
+            """Extract enum value from object attribute, handling both enum types and UNSET."""
+            attr = getattr(obj, attr_name, None)
+            if attr is None or _is_unset(attr):
+                return default
+            if hasattr(attr, "value"):
+                return attr.value
+            return str(attr)
 
-                if sobr_result:
-                    sobr_data = sobr_result.data if sobr_result else []
-                    _LOGGER.debug("Fetched %d scale-out repositories from API", len(sobr_data))
+        return {
+            "status": humanize(get_license_enum_attr(license_data, "status"), "Unknown"),
+            "status_raw": get_license_enum_attr(license_data, "status"),
+            "edition": humanize(get_license_enum_attr(license_data, "edition"), "Unknown"),
+            "edition_raw": get_license_enum_attr(license_data, "edition"),
+            # Note: type_ with underscore
+            "type": humanize(get_license_enum_attr(license_data, "type_"), "Unknown"),
+            "type_raw": get_license_enum_attr(license_data, "type_"),
+            "expiration_date": _license_datetime(license_data, "expiration_date"),
+            "support_expiration_date": _license_datetime(license_data, "support_expiration_date"),
+            "support_id": _license_text(license_data, "support_id"),
+            "auto_update_enabled": getattr(license_data, "auto_update_enabled", False),
+            "licensed_to": _license_text(license_data, "licensed_to"),
+            "cloud_connect": get_license_enum_attr(license_data, "cloud_connect"),
+            "free_agent_instance_consumption_enabled": getattr(
+                license_data, "free_agent_instance_consumption_enabled", False
+            ),
+            **_license_instance_usage(license_data),
+        }
 
-                    for sobr in sobr_data:
-                        try:
-                            # See the job loop: entity unique IDs need a usable ID
-                            if not get_uuid_value(sobr.id):
-                                _LOGGER.warning(
-                                    "Skipping scale-out repository %s: no usable ID",
-                                    getattr(sobr, "name", "Unknown"),
-                                )
-                                continue
-
-                            sobr_dict = {
-                                "id": get_uuid_value(sobr.id),
-                                "name": sobr.name or "Unknown",
-                                "description": sobr.description or "",
-                                "unique_id": (
-                                    sobr.unique_id if sobr.unique_id is not UNSET else None
-                                ),
-                            }
-
-                            # Extract performance tier extents
-                            if hasattr(sobr, "performance_tier") and sobr.performance_tier:
-                                extents = []
-                                if (
-                                    hasattr(sobr.performance_tier, "performance_extents")
-                                    and sobr.performance_tier.performance_extents
-                                ):
-                                    for extent in sobr.performance_tier.performance_extents:
-                                        # In API v1.2-rev1, extent.status is a single
-                                        # ERepositoryExtentStatusType (a str-subclass enum),
-                                        # not a list.  In v1.3-rev1+ it is a list.
-                                        # Handle both forms so iterating over the enum's
-                                        # string characters (which would raise AttributeError
-                                        # on .value for each char) is avoided.
-                                        raw_status = (
-                                            extent.status if extent.status is not UNSET else []
-                                        )
-                                        if isinstance(raw_status, list):
-                                            status_values = [s.value for s in raw_status]
-                                        elif hasattr(raw_status, "value"):
-                                            status_values = [raw_status.value]
-                                        else:
-                                            status_values = []
-                                        extent_dict = {
-                                            "id": get_uuid_value(extent.id),
-                                            "name": extent.name or "Unknown",
-                                            "status": status_values,
-                                        }
-                                        extents.append(extent_dict)
-                                sobr_dict["extents"] = extents
-
-                            # Add all additional properties from the API response
-                            if hasattr(sobr, "additional_properties"):
-                                for key, value in sobr.additional_properties.items():
-                                    sobr_dict[key] = serialize_value(value)
-
-                            sobr_list.append(sobr_dict)
-                            _LOGGER.debug(
-                                "Successfully parsed SOBR: %s (id: %s, extents: %d)",
-                                sobr_dict.get("name"),
-                                sobr_dict.get("id"),
-                                len(sobr_dict.get("extents", [])),
-                            )
-                        except (ValueError, KeyError, AttributeError, TypeError) as err:
-                            _LOGGER.warning(
-                                "Failed to parse SOBR %s: %s",
-                                getattr(sobr, "name", "Unknown"),
-                                err,
-                            )
-                            continue
-            except (AttributeError, KeyError, TypeError) as err:
-                _LOGGER.warning("Failed to parse scale-out repositories: %s", err)
-            except Exception as err:
-                _LOGGER.warning("Failed to fetch scale-out repositories: %s", err)
-
-            _LOGGER.debug("Total SOBRs added to coordinator data: %d", len(sobr_list))
-
-            # Fetch backup proxies. The states endpoint carries the configuration this needs
-            # as well as online/disabled/out-of-date, so one call covers both — where it
-            # exists. Before 1.3-rev0 there is only the configuration endpoint, and the
-            # three state fields read back as None (issue #104).
-            proxies_list = []
-            try:
-                proxies_api = await asyncio.to_thread(veeam_client.api, "proxies")
-                proxies_result = await veeam_client.call(getattr(proxies_api, proxies_endpoint))
-
-                for proxy in getattr(proxies_result, "data", None) or []:
-                    try:
-                        proxy_id = get_uuid_value(proxy.id)
-                        if not proxy_id:
-                            _LOGGER.warning(
-                                "Skipping proxy %s: no usable ID",
-                                getattr(proxy, "name", "Unknown"),
-                            )
-                            continue
-
-                        proxies_list.append(
-                            {
-                                "id": proxy_id,
-                                "name": proxy.name or "Unknown",
-                                "description": getattr(proxy, "description", "") or "",
-                                "type": humanize(get_enum_value(proxy.type_), "Unknown"),
-                                "type_raw": get_enum_value(proxy.type_),
-                                "host_id": get_uuid_value(getattr(proxy, "host_id", None)),
-                                "host_name": getattr(proxy, "host_name", None) or None,
-                                "is_online": _bool_or_none(proxy, "is_online"),
-                                "is_disabled": _bool_or_none(proxy, "is_disabled"),
-                                "is_out_of_date": _bool_or_none(proxy, "is_out_of_date"),
-                            }
-                        )
-                    except (ValueError, KeyError, AttributeError, TypeError) as err:
-                        _LOGGER.warning(
-                            "Failed to parse proxy %s: %s",
-                            getattr(proxy, "name", "Unknown"),
-                            err,
-                        )
-                        continue
-            except (AttributeError, KeyError, TypeError, ValueError) as err:
-                _LOGGER.warning("Failed to parse proxies: %s", err)
-            except Exception as err:
-                _LOGGER.warning("Failed to fetch proxies: %s", err)
-
-            _LOGGER.debug("Total proxies added to coordinator data: %d", len(proxies_list))
-
-            # Fetch WAN accelerators. There is no states endpoint for these, so this is
-            # configuration only: cache location and size, and the traffic settings.
-            wan_accelerators_list = []
-            try:
-                wan_api = await asyncio.to_thread(veeam_client.api, "wan_accelerators")
-                wan_result = await veeam_client.call(wan_api.get_all_wan_accelerators)
-
-                for accelerator in getattr(wan_result, "data", None) or []:
-                    try:
-                        wan_id = get_uuid_value(getattr(accelerator, "id", None))
-                        if not wan_id:
-                            _LOGGER.warning(
-                                "Skipping WAN accelerator %s: no usable ID",
-                                getattr(accelerator, "name", "Unknown"),
-                            )
-                            continue
-
-                        server = getattr(accelerator, "server", None)
-                        cache = getattr(accelerator, "cache", None)
-                        has_server = not _is_unset(server)
-                        has_cache = not _is_unset(cache)
-
-                        wan_accelerators_list.append(
-                            {
-                                "id": wan_id,
-                                "name": getattr(accelerator, "name", None) or "Unknown",
-                                "host_id": (
-                                    get_uuid_value(getattr(server, "host_id", None))
-                                    if has_server
-                                    else None
-                                ),
-                                "description": (
-                                    _license_text(server, "description", default="")
-                                    if has_server
-                                    else ""
-                                ),
-                                "traffic_port": (
-                                    _number_or_none(server, "traffic_port") if has_server else None
-                                ),
-                                "streams_count": (
-                                    _number_or_none(server, "streams_count") if has_server else None
-                                ),
-                                "high_bandwidth_mode": (
-                                    _bool_or_none(server, "high_bandwidth_mode_enabled")
-                                    if has_server
-                                    else None
-                                ),
-                                "cache_folder": (
-                                    _license_text(cache, "cache_folder", default=None)
-                                    if has_cache
-                                    else None
-                                ),
-                                "cache_size": (
-                                    _number_or_none(cache, "cache_size") if has_cache else None
-                                ),
-                                "cache_size_unit": (
-                                    get_enum_value(
-                                        getattr(cache, "cache_size_unit", None), "Unknown"
-                                    )
-                                    if has_cache
-                                    else None
-                                ),
-                            }
-                        )
-                    except (ValueError, KeyError, AttributeError, TypeError) as err:
-                        _LOGGER.warning(
-                            "Failed to parse WAN accelerator %s: %s",
-                            getattr(accelerator, "name", "Unknown"),
-                            err,
-                        )
-                        continue
-            except (AttributeError, KeyError, TypeError, ValueError) as err:
-                _LOGGER.warning("Failed to parse WAN accelerators: %s", err)
-            except Exception as err:
-                _LOGGER.warning("Failed to fetch WAN accelerators: %s", err)
-
-            _LOGGER.debug(
-                "Total WAN accelerators added to coordinator data: %d",
-                len(wan_accelerators_list),
+    async def fetch_repository_states(repositories_api) -> dict | None:
+        """Repository states by ID, or None when they could not be fetched."""
+        try:
+            states = await fetch_all(
+                repositories_api.get_all_repositories_states, "repository states"
             )
+        except (VeeamAuthenticationError, VeeamSessionError):
+            raise
+        except Exception as err:  # noqa: BLE001 - the repositories themselves still load
+            note_failure("repository_states", err)
+            return None
 
-            # Fetch High Availability cluster configuration and state. Only reachable on
-            # 1.3-rev2 and newer, and only answered by a server that is actually clustered —
-            # an unclustered server is the common case, not an error.
-            ha_cluster = None
-            if ha_cluster_supported:
-                try:
-                    ha_api = await asyncio.to_thread(
-                        veeam_client.api, "high_availability_ha_cluster"
+        note_success("repository_states")
+        states_by_id = {}
+        for state in states:
+            repo_id = get_uuid_value(getattr(state, "id", None))
+            if repo_id:
+                states_by_id[repo_id] = state
+        _LOGGER.debug("Fetched %d repository states from API", len(states_by_id))
+        return states_by_id
+
+    async def fetch_repositories() -> tuple[list[dict], bool]:
+        repositories_api = veeam_client.api("repositories")
+        repositories_data = await fetch_all(repositories_api.get_all_repositories, "repositories")
+        _LOGGER.debug("Fetched %d repositories from API", len(repositories_data))
+        states_by_id = await fetch_repository_states(repositories_api)
+
+        repositories_list = []
+        for repo in repositories_data:
+            try:
+                # See the job loop: entity unique IDs need a usable ID
+                repo_id = get_uuid_value(repo.id)
+                if not repo_id:
+                    _LOGGER.warning(
+                        "Skipping repository %s: no usable ID", getattr(repo, "name", "Unknown")
                     )
-                    cluster = await veeam_client.call(ha_api.get_high_availability_cluster)
+                    continue
 
-                    if cluster is None:
-                        _LOGGER.debug("HA cluster endpoint returned no data")
-                    elif not hasattr(cluster, "cluster_endpoint"):
-                        # An Error model. "Not configured" is the normal answer from an
-                        # unclustered server; anything else is a failure worth reporting.
-                        unclustered, detail = _cluster_absent_reason(cluster)
-                        if unclustered:
-                            _LOGGER.debug("No HA cluster on this server: %s", detail)
+                type_raw = get_enum_value(repo.type_)
+                repo_dict = {
+                    "id": repo_id,
+                    "name": repo.name or "Unknown",
+                    "description": repo.description or "",
+                    "type": humanize(type_raw, "Unknown"),
+                    "type_raw": type_raw,
+                    "unique_id": (repo.unique_id if repo.unique_id is not UNSET else None),
+                    # Whether capacity and online state are known this cycle. False when the
+                    # states endpoint failed or did not list this repository; the entities
+                    # that depend on it are then unavailable rather than silently unknown.
+                    "has_state": False,
+                }
+
+                state = states_by_id.get(repo_id) if states_by_id is not None else None
+                if state is not None:
+                    repo_dict["has_state"] = True
+                    repo_dict["capacity_gb"] = _number_or_none(state, "capacity_gb")
+                    repo_dict["free_gb"] = _number_or_none(state, "free_gb")
+                    repo_dict["used_space_gb"] = _number_or_none(state, "used_space_gb")
+                    repo_dict["is_online"] = _bool_or_none(state, "is_online")
+                    repo_dict["is_out_of_date"] = _bool_or_none(state, "is_out_of_date")
+                    stateless_repositories.discard(repo_id)
+                elif states_by_id is not None and repo_id not in stateless_repositories:
+                    # Reported once per repository: it persists, and says nothing new later
+                    stateless_repositories.add(repo_id)
+                    _LOGGER.warning(
+                        "Repository %s (id %s, type %s) is not in the repository states "
+                        "response, which listed %d repositories. Its capacity, free space "
+                        "and online state are unavailable. Veeam does not report states "
+                        "for every repository type, or for a repository it cannot reach",
+                        repo_dict["name"],
+                        repo_id,
+                        type_raw,
+                        len(states_by_id),
+                    )
+
+                extras = getattr(repo, "additional_properties", None) or {}
+                is_immutable, immutability_days = _repository_immutability(type_raw, extras)
+                if is_immutable is not None:
+                    repo_dict["is_immutable"] = is_immutable
+                if immutability_days is not None:
+                    repo_dict["immutability_days"] = immutability_days
+                _LOGGER.debug(
+                    "Repository %s: type=%s immutable=%s days=%s",
+                    repo_dict["name"],
+                    type_raw,
+                    is_immutable,
+                    immutability_days,
+                )
+
+                # Accessible - use is_online from state as a proxy
+                repo_dict["is_accessible"] = repo_dict.get("is_online")
+
+                # Add all additional properties from the API response, without letting them
+                # replace the fields parsed above
+                for key, value in extras.items():
+                    repo_dict.setdefault(key, serialize_value(value))
+
+                repositories_list.append(repo_dict)
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning(
+                    "Failed to parse repository %s: %s",
+                    getattr(repo, "name", "Unknown"),
+                    describe_error(err),
+                )
+
+        _LOGGER.debug("Total repositories added to coordinator data: %d", len(repositories_list))
+        return repositories_list, states_by_id is not None
+
+    async def fetch_sobrs() -> list[dict]:
+        sobr_api = veeam_client.api("repositories")
+        sobr_list = []
+        for sobr in await fetch_all(
+            sobr_api.get_all_scale_out_repositories, "scale-out repositories"
+        ):
+            try:
+                # See the job loop: entity unique IDs need a usable ID
+                sobr_id = get_uuid_value(sobr.id)
+                if not sobr_id:
+                    _LOGGER.warning(
+                        "Skipping scale-out repository %s: no usable ID",
+                        getattr(sobr, "name", "Unknown"),
+                    )
+                    continue
+
+                sobr_dict = {
+                    "id": sobr_id,
+                    "name": sobr.name or "Unknown",
+                    "description": sobr.description or "",
+                    "unique_id": (sobr.unique_id if sobr.unique_id is not UNSET else None),
+                }
+
+                # Extract performance tier extents
+                performance_tier = getattr(sobr, "performance_tier", None)
+                if performance_tier and not _is_unset(performance_tier):
+                    extents = []
+                    for extent in getattr(performance_tier, "performance_extents", None) or []:
+                        # In API v1.2-rev1, extent.status is a single enum (a str
+                        # subclass), not a list; in v1.3-rev1+ it is a list. Iterating the
+                        # enum would walk its characters, so both forms are handled.
+                        raw_status = extent.status if extent.status is not UNSET else []
+                        if isinstance(raw_status, list):
+                            status_values = [get_enum_value(s) for s in raw_status]
+                        elif hasattr(raw_status, "value"):
+                            status_values = [raw_status.value]
                         else:
-                            _LOGGER.warning("Could not read the HA cluster: %s", detail)
-                    else:
-                        ha_cluster = _parse_ha_cluster(
-                            cluster, get_enum_value, get_uuid_value, serialize_value
+                            status_values = []
+                        extents.append(
+                            {
+                                "id": get_uuid_value(extent.id),
+                                "name": extent.name or "Unknown",
+                                "status": status_values,
+                            }
                         )
-                        _LOGGER.debug(
-                            "Parsed HA cluster %s (online=%s)",
-                            ha_cluster.get("name"),
-                            ha_cluster.get("is_online"),
-                        )
-                except (AttributeError, KeyError, TypeError, ValueError) as err:
-                    _LOGGER.warning("Failed to parse HA cluster: %s", err)
-                except Exception as err:
-                    _LOGGER.warning("Failed to fetch HA cluster: %s", err)
+                    sobr_dict["extents"] = extents
 
-            # Update diagnostic values - successful poll
-            health_ok = True
-            last_successful_poll = dt_util.now()
+                # Add all additional properties from the API response
+                for key, value in (getattr(sobr, "additional_properties", None) or {}).items():
+                    sobr_dict.setdefault(key, serialize_value(value))
 
-            return {
-                "jobs": jobs_list,
-                "server_info": server_info,
-                "license_info": license_info,
-                "repositories": repositories_list,
-                "sobrs": sobr_list,
-                "proxies": proxies_list,
-                "wan_accelerators": wan_accelerators_list,
-                "ha_cluster": ha_cluster,
-                "diagnostics": {
-                    "connected": connected,
-                    "health_ok": health_ok,
-                    "last_successful_poll": last_successful_poll,
-                },
-            }
+                sobr_list.append(sobr_dict)
+                _LOGGER.debug(
+                    "Successfully parsed SOBR: %s (id: %s, extents: %d)",
+                    sobr_dict.get("name"),
+                    sobr_dict.get("id"),
+                    len(sobr_dict.get("extents", [])),
+                )
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning(
+                    "Failed to parse SOBR %s: %s",
+                    getattr(sobr, "name", "Unknown"),
+                    describe_error(err),
+                )
+        return sobr_list
 
+    async def fetch_proxies() -> list[dict]:
+        # The states endpoint carries the configuration this needs as well as online/
+        # disabled/out-of-date, so one call covers both — where it exists. Before 1.3-rev0
+        # there is only the configuration endpoint, and the three state fields read back as
+        # None (issue #104).
+        proxies_api = veeam_client.api("proxies")
+        proxies_list = []
+        for proxy in await fetch_all(getattr(proxies_api, proxies_endpoint), "proxies"):
+            try:
+                proxy_id = get_uuid_value(proxy.id)
+                if not proxy_id:
+                    _LOGGER.warning(
+                        "Skipping proxy %s: no usable ID", getattr(proxy, "name", "Unknown")
+                    )
+                    continue
+
+                proxies_list.append(
+                    {
+                        "id": proxy_id,
+                        "name": proxy.name or "Unknown",
+                        "description": getattr(proxy, "description", "") or "",
+                        "type": humanize(get_enum_value(proxy.type_), "Unknown"),
+                        "type_raw": get_enum_value(proxy.type_),
+                        "host_id": get_uuid_value(getattr(proxy, "host_id", None)),
+                        "host_name": getattr(proxy, "host_name", None) or None,
+                        "is_online": _bool_or_none(proxy, "is_online"),
+                        "is_disabled": _bool_or_none(proxy, "is_disabled"),
+                        "is_out_of_date": _bool_or_none(proxy, "is_out_of_date"),
+                    }
+                )
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning(
+                    "Failed to parse proxy %s: %s",
+                    getattr(proxy, "name", "Unknown"),
+                    describe_error(err),
+                )
+        return proxies_list
+
+    async def fetch_wan_accelerators() -> list[dict]:
+        # There is no states endpoint for these, so this is configuration only: cache
+        # location and size, and the traffic settings.
+        wan_api = veeam_client.api("wan_accelerators")
+        wan_accelerators_list = []
+        for accelerator in await fetch_all(wan_api.get_all_wan_accelerators, "WAN accelerators"):
+            try:
+                wan_id = get_uuid_value(getattr(accelerator, "id", None))
+                if not wan_id:
+                    _LOGGER.warning(
+                        "Skipping WAN accelerator %s: no usable ID",
+                        getattr(accelerator, "name", "Unknown"),
+                    )
+                    continue
+
+                server = getattr(accelerator, "server", None)
+                cache = getattr(accelerator, "cache", None)
+                has_server = not _is_unset(server)
+                has_cache = not _is_unset(cache)
+
+                wan_accelerators_list.append(
+                    {
+                        "id": wan_id,
+                        "name": getattr(accelerator, "name", None) or "Unknown",
+                        "host_id": (
+                            get_uuid_value(getattr(server, "host_id", None)) if has_server else None
+                        ),
+                        "description": (
+                            _license_text(server, "description", default="") if has_server else ""
+                        ),
+                        "traffic_port": (
+                            _number_or_none(server, "traffic_port") if has_server else None
+                        ),
+                        "streams_count": (
+                            _number_or_none(server, "streams_count") if has_server else None
+                        ),
+                        "high_bandwidth_mode": (
+                            _bool_or_none(server, "high_bandwidth_mode_enabled")
+                            if has_server
+                            else None
+                        ),
+                        "cache_folder": (
+                            _license_text(cache, "cache_folder", default=None)
+                            if has_cache
+                            else None
+                        ),
+                        "cache_size": _number_or_none(cache, "cache_size") if has_cache else None,
+                        "cache_size_unit": (
+                            get_enum_value(getattr(cache, "cache_size_unit", None), "Unknown")
+                            if has_cache
+                            else None
+                        ),
+                    }
+                )
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning(
+                    "Failed to parse WAN accelerator %s: %s",
+                    getattr(accelerator, "name", "Unknown"),
+                    describe_error(err),
+                )
+        return wan_accelerators_list
+
+    async def fetch_ha_cluster() -> dict | None:
+        # Only called on 1.3-rev2 and newer, and only answered by a server that is actually
+        # clustered — an unclustered server is the common case, not an error.
+        ha_api = veeam_client.api("high_availability_ha_cluster")
+        cluster = await veeam_client.call(ha_api.get_high_availability_cluster)
+
+        if cluster is None:
+            _LOGGER.debug("HA cluster endpoint returned no data")
+            return None
+        if not hasattr(cluster, "cluster_endpoint"):
+            # An Error model. "Not configured" is the normal answer from an unclustered
+            # server; anything else is a failure worth reporting.
+            unclustered, detail = _cluster_absent_reason(cluster)
+            if unclustered:
+                _LOGGER.debug("No HA cluster on this server: %s", detail)
+                return None
+            _LOGGER.debug("Could not read the HA cluster: %s", detail)
+            raise UnexpectedResponseError(f"HA cluster endpoint answered {detail}")
+
+        ha_cluster = _parse_ha_cluster(cluster, get_enum_value, get_uuid_value, serialize_value)
+        _LOGGER.debug(
+            "Parsed HA cluster %s (online=%s)", ha_cluster.get("name"), ha_cluster.get("is_online")
+        )
+        return ha_cluster
+
+    async def poll() -> dict:
+        """One pass over every endpoint.
+
+        Each endpoint fails on its own: its previous data is kept, it is marked in
+        fetch_ok, and its entities go unavailable — nothing is deleted over one failed
+        fetch. Only when every endpoint fails does the whole poll fail. An authentication
+        or session error is never absorbed here; it concerns every endpoint alike.
+        """
+        previous = coordinator.data or {}
+        fetch_ok: dict[str, bool] = {}
+        errors: list[tuple[str, BaseException]] = []
+        requested = 0
+
+        async def run(key: str, fetcher, default):
+            nonlocal requested
+            requested += 1
+            try:
+                value = await fetcher()
+            except (VeeamAuthenticationError, VeeamSessionError):
+                raise
+            except Exception as err:  # noqa: BLE001 - one endpoint must not sink the rest
+                fetch_ok[key] = False
+                errors.append((key, err))
+                return previous.get(key, default)
+            fetch_ok[key] = True
+            return value
+
+        jobs = await run("jobs", fetch_jobs, [])
+        server_info = await run("server_info", fetch_server_info, None)
+        license_info = await run("license_info", fetch_license_info, None)
+        repositories_result = await run("repositories", fetch_repositories, None)
+        sobrs = await run("sobrs", fetch_sobrs, [])
+        proxies = await run("proxies", fetch_proxies, [])
+        wan_accelerators = await run("wan_accelerators", fetch_wan_accelerators, [])
+        if ha_cluster_supported:
+            ha_cluster = await run("ha_cluster", fetch_ha_cluster, None)
+        else:
+            # Not in this API revision: nothing was asked, so nothing failed
+            ha_cluster, fetch_ok["ha_cluster"] = None, True
+
+        if isinstance(repositories_result, tuple):
+            repositories, fetch_ok["repository_states"] = repositories_result
+        else:
+            # The repositories fetch itself failed; `previous` held the parsed list
+            repositories = repositories_result or []
+            fetch_ok["repository_states"] = False
+
+        if len(errors) == requested:
+            # Nothing answered: the server is unreachable, not merely misbehaving. One
+            # failed update says so; eight endpoint warnings would only repeat it.
+            raise UpdateFailed(f"Error communicating with API: {describe_error(errors[0][1])}")
+
+        for key, err in errors:
+            note_failure(key, err)
+        for key, ok in fetch_ok.items():
+            if ok and key != "repository_states":
+                note_success(key)
+
+        return {
+            "jobs": jobs,
+            "server_info": server_info,
+            "license_info": license_info,
+            "repositories": repositories,
+            "sobrs": sobrs,
+            "proxies": proxies,
+            "wan_accelerators": wan_accelerators,
+            "ha_cluster": ha_cluster,
+            "fetch_ok": fetch_ok,
+            "diagnostics": {
+                "connected": True,
+                # Healthy only when every endpoint answered
+                "health_ok": all(fetch_ok.values()),
+                "failed_endpoints": sorted(k for k, ok in fetch_ok.items() if not ok),
+                "last_successful_poll": dt_util.now(),
+            },
+        }
+
+    async def async_update_data():
+        """Fetch data from API, within a time limit."""
+        try:
+            try:
+                async with asyncio.timeout(UPDATE_TIMEOUT):
+                    return await poll()
+            except VeeamSessionError as err:
+                # The SDK has already dropped the session, so the retry logs in afresh. A
+                # second rejection in a row is reported as an ordinary failed update.
+                _LOGGER.debug("Session rejected mid-poll (%s); retrying once", err)
+                async with asyncio.timeout(UPDATE_TIMEOUT):
+                    return await poll()
+        except VeeamAuthenticationError as err:
+            # Reaching here means the password login itself was refused: ask for new ones
+            raise ConfigEntryAuthFailed(f"Veeam rejected the credentials: {err}") from err
+        except UpdateFailed:
+            raise
+        except TimeoutError as err:
+            raise UpdateFailed(f"Poll did not complete within {UPDATE_TIMEOUT} seconds") from err
         except Exception as err:
             # When an update fails, the coordinator retains the last successful data,
             # so diagnostic sensors will continue to show the last successful poll time
-            raise UpdateFailed(f"Error communicating with API: {err}") from err
+            raise UpdateFailed(f"Error communicating with API: {describe_error(err)}") from err
 
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
+        config_entry=entry,
         name=DOMAIN,
         update_method=async_update_data,
         update_interval=timedelta(seconds=UPDATE_INTERVAL),
     )
 
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+    except BaseException:
+        await veeam_client.close()
+        raise
 
     # Runs on every setup, so a reload re-reports it and a newly licensed server clears it
     _check_license_support(hass, entry, coordinator.data)
+    _warn_about_duplicate_entries(hass, entry)
 
     entry.runtime_data = {
         "coordinator": coordinator,
@@ -1139,21 +1281,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # the entry, which may only hold "auto"
         "api_version": api_version,
     }
+    entry.async_on_unload(veeam_client.close)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    entry.async_on_unload(entry.add_update_listener(update_listener))
+    # One sweep for every platform, after they have added this cycle's entities. It skips
+    # any kind whose fetch failed or came back empty, so an outage never deletes anything.
+    @callback
+    def _prune() -> None:
+        async_prune_stale(hass, entry, coordinator.data)
+
+    _prune()
+    entry.async_on_unload(coordinator.async_add_listener(_prune))
 
     return True
 
 
-async def update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update."""
-    await hass.config_entries.async_reload(entry.entry_id)
+def _warn_about_duplicate_entries(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Say so when another entry points at the same server.
+
+    Entry unique IDs are host:port, and 13.1 answers on both 443 and 9419, so one server can
+    be added twice. Both entries then create a full set of entities on the same devices, and
+    Home Assistant suffixes the second set with _2.
+    """
+    host = str(entry.data.get(CONF_HOST, "")).lower()
+    others = [
+        other.title
+        for other in hass.config_entries.async_entries(DOMAIN)
+        if other.entry_id != entry.entry_id and str(other.data.get(CONF_HOST, "")).lower() == host
+    ]
+    if others:
+        _LOGGER.warning(
+            "%s is also configured as %s. Each entry creates its own entities for the same "
+            "server, so they appear twice (the second with a _2 suffix); remove one entry",
+            entry.data.get(CONF_HOST),
+            ", ".join(others),
+        )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
+    """Unload a config entry. The client is closed by the unload callback set up above."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 

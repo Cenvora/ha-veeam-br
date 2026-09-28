@@ -130,22 +130,69 @@ def test_the_delete_hook_exists_with_the_name_home_assistant_looks_for():
     assert "return False" in hook and "return True" in hook
 
 
-def test_the_automatic_sweep_will_not_purge_on_an_empty_fetch():
+PRUNING_PATH = COMPONENT / "pruning.py"
+
+
+@pytest.fixture(name="reported", scope="module")
+def reported_fixture():
+    """reported_ids from pruning.py, which decides whether a kind may be pruned at all."""
+    tree = ast.parse(PRUNING_PATH.read_text(encoding="utf-8"))
+    nodes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in ("reported_ids", "forget_missing")
+    ]
+    namespace = {"Any": object}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(PRUNING_PATH), "exec"), namespace)
+    return namespace
+
+
+def test_the_automatic_sweep_will_not_purge_on_an_empty_fetch(reported):
     """An empty list is indistinguishable from a failed fetch that degraded gracefully.
 
     Without this, the first time the jobs endpoint errored, every job device would be deleted.
     """
-    source = SENSOR_PATH.read_text(encoding="utf-8")
+    assert reported["reported_ids"](data(jobs=[]), "jobs") is None
 
-    assert "prunable" in source
-    for prefix in ("job_", "repository_", "sobr_"):
-        assert f'prunable["{prefix}"]' in source, f"{prefix} removal should be gated"
+
+def test_the_automatic_sweep_will_not_purge_after_a_failed_fetch(reported):
+    """A failed endpoint keeps its previous data; that is not evidence either way."""
+    payload = data(fetch_ok={"jobs": False, "repositories": True})
+
+    assert reported["reported_ids"](payload, "jobs") is None
+    assert reported["reported_ids"](payload, "repositories") == {"repo-1"}
+
+
+def test_a_successful_fetch_is_trusted(reported):
+    assert reported["reported_ids"](data(fetch_ok={"jobs": True}), "jobs") == {"job-1"}
+
+
+def test_platforms_forget_only_what_was_really_removed(reported):
+    tracked = {"job-1", "job-2"}
+
+    reported["forget_missing"](tracked, None)
+    assert tracked == {"job-1", "job-2"}, "an untrusted cycle forgets nothing"
+
+    reported["forget_missing"](tracked, {"job-1"})
+    assert tracked == {"job-1"}
+
+
+def test_one_sweep_serves_every_platform():
+    """Each platform used to scan the whole registry, deleting the others' entities."""
+    for name in ("sensor.py", "binary_sensor.py", "button.py"):
+        source = (COMPONENT / name).read_text(encoding="utf-8")
+        assert "_remove_stale" not in source, f"{name} still sweeps"
+        assert "dr.async_get" not in source, f"{name} still removes devices itself"
+        assert "forget_missing(" in source, f"{name} never forgets pruned objects"
+
+    pruning = PRUNING_PATH.read_text(encoding="utf-8")
+    assert "async_entries_for_config_entry" in pruning
 
 
 def test_manual_deletion_covers_what_the_sweep_deliberately_skips():
-    """The sweep no longer prunes on empty, so the manual path has to work."""
+    """The sweep never prunes on empty, so the manual path has to work."""
     init_source = INIT_PATH.read_text(encoding="utf-8")
-    sensor_source = SENSOR_PATH.read_text(encoding="utf-8")
+    pruning_source = PRUNING_PATH.read_text(encoding="utf-8")
 
     assert "async def async_remove_config_entry_device" in init_source
-    assert "Delete button" in sensor_source or "async_remove_config_entry_device" in sensor_source
+    assert "Delete button" in pruning_source

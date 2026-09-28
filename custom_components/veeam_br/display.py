@@ -140,3 +140,13 @@ def humanize(value: Any, default: str | None = None) -> str | None:
         return default
 
     return " ".join(_word(word) for word in words)
+
+
+def describe_error(err: BaseException) -> str:
+    """Name an exception for a log line or an error message, even when its message is empty.
+
+    httpx timeouts and several transport errors carry no message at all, which produced
+    warnings ending in a bare colon ("Failed to fetch repositories: ").
+    """
+    message = str(err).strip()
+    return f"{type(err).__name__}: {message}" if message else type(err).__name__

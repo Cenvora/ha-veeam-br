@@ -48,7 +48,7 @@ def test_proxies_are_fetched_from_the_states_endpoint():
     source = INIT_PATH.read_text(encoding="utf-8")
 
     assert "get_all_proxies_states" in source
-    assert 'f"proxies.{proxies_endpoint}"' in source, "should be pre-imported like the others"
+    assert 'f"{package}.api.proxies.{proxies_endpoint}"' in source, "should be pre-imported"
 
 
 def test_proxy_endpoint_falls_back_when_states_is_missing():
@@ -59,8 +59,9 @@ def test_proxy_endpoint_falls_back_when_states_is_missing():
     """
     source = INIT_PATH.read_text(encoding="utf-8")
 
-    assert 'PROXY_STATES_FEATURE = "api.proxies.get_all_proxies_states"' in source
-    assert "check_api_feature_availability(api_version, PROXY_STATES_FEATURE)" in source
+    const = (COMPONENT / "const.py").read_text(encoding="utf-8")
+    assert 'FEATURE_PROXY_STATES = "api.proxies.get_all_proxies_states"' in const
+    assert "check_api_feature_availability(api_version, FEATURE_PROXY_STATES)" in source
     assert '"get_all_proxies_states" if proxy_states_supported else "get_all_proxies"' in source
     assert "getattr(proxies_api, proxies_endpoint)" in source
 
@@ -80,8 +81,8 @@ def test_states_endpoint_presence_matches_what_the_fallback_assumes(package, exp
 def test_proxy_state_flags_are_read_as_booleans_or_unknown():
     """A missing flag must not read as False, which would claim a proxy is online."""
     source = INIT_PATH.read_text(encoding="utf-8")
-    block = source[source.index("proxies_list = []") :]
-    block = block[: block.index("wan_accelerators_list = []")]
+    block = source[source.index("async def fetch_proxies") :]
+    block = block[: block.index("async def fetch_wan_accelerators")]
 
     for flag in ("is_online", "is_disabled", "is_out_of_date"):
         assert f'_bool_or_none(proxy, "{flag}")' in block, f"{flag} should go through the guard"
@@ -90,27 +91,31 @@ def test_proxy_state_flags_are_read_as_booleans_or_unknown():
 def test_proxies_without_an_id_are_skipped():
     """Entity unique IDs are built from it, as with jobs and repositories."""
     source = INIT_PATH.read_text(encoding="utf-8")
-    block = source[source.index("proxies_list = []") :]
-    block = block[: block.index("wan_accelerators_list = []")]
+    block = source[source.index("async def fetch_proxies") :]
+    block = block[: block.index("async def fetch_wan_accelerators")]
 
     assert "no usable ID" in block
 
 
 def test_proxy_failures_do_not_take_down_the_refresh():
-    """A proxy endpoint error should cost the proxy entities, not everything else."""
-    source = INIT_PATH.read_text(encoding="utf-8")
-    block = source[source.index("proxies_list = []") :]
-    block = block[: block.index('_LOGGER.debug("Total proxies')]
+    """A proxy endpoint error should cost the proxy entities, not everything else.
 
-    assert "Failed to parse proxies" in block
-    assert "Failed to fetch proxies" in block
+    Every endpoint runs through the same per-endpoint guard; test_behaviour.py shows a
+    failed endpoint leaving the others, and its own entities, in place.
+    """
+    source = INIT_PATH.read_text(encoding="utf-8")
+
+    assert 'await run("proxies", fetch_proxies, [])' in source
+    block = source[source.index("async def fetch_proxies") :]
+    block = block[: block.index("async def fetch_wan_accelerators")]
+    assert "Failed to parse proxy" in block, "one bad proxy should not cost the others"
 
 
 def test_wan_accelerator_optional_fields_are_guarded():
     """server and cache are both optional in the schema, and UNSET is not None."""
     source = INIT_PATH.read_text(encoding="utf-8")
-    block = source[source.index("wan_accelerators_list = []") :]
-    block = block[: block.index("# Fetch High Availability cluster")]
+    block = source[source.index("async def fetch_wan_accelerators") :]
+    block = block[: block.index("async def fetch_ha_cluster")]
 
     assert "has_server" in block and "has_cache" in block
     assert "_is_unset(server)" in block and "_is_unset(cache)" in block
@@ -119,8 +124,8 @@ def test_wan_accelerator_optional_fields_are_guarded():
 def test_both_kinds_reach_the_coordinator_payload():
     source = INIT_PATH.read_text(encoding="utf-8")
 
-    assert '"proxies": proxies_list' in source
-    assert '"wan_accelerators": wan_accelerators_list' in source
+    assert '"proxies": proxies,' in source
+    assert '"wan_accelerators": wan_accelerators,' in source
 
 
 def test_entities_are_gated_on_the_endpoint_existing():
@@ -135,15 +140,13 @@ def test_entities_are_gated_on_the_endpoint_existing():
     binary_source = BINARY_PATH.read_text(encoding="utf-8")
     button_source = BUTTON_PATH.read_text(encoding="utf-8")
 
-    assert (
-        'check_api_feature_availability(api_version, "api.proxies.get_all_proxies_states")'
-        in binary_source
-    )
-    assert (
-        'check_api_feature_availability(api_version, "api.proxies.enable_proxy")'
-        in button_source
-    )
-    assert 'check_api_feature_availability(api_version, "api.wan_accelerators")' in sensor_source
+    assert "check_api_feature_availability(api_version, FEATURE_PROXY_STATES)" in binary_source
+    assert "check_api_feature_availability(api_version, FEATURE_PROXY_ENABLE)" in button_source
+    assert "check_api_feature_availability(api_version, FEATURE_WAN_ACCELERATORS)" in sensor_source
+
+    const = (COMPONENT / "const.py").read_text(encoding="utf-8")
+    assert 'FEATURE_PROXY_ENABLE = "api.proxies.enable_proxy"' in const
+    assert 'FEATURE_WAN_ACCELERATORS = "api.wan_accelerators"' in const
 
 
 def test_proxy_enabled_is_reported_the_healthy_way_round():
@@ -175,19 +178,20 @@ def test_proxy_buttons_are_config_entities():
 
 
 def test_proxy_entities_share_one_device_per_proxy():
-    """Every platform must agree on the identifier or they split into separate devices."""
-    sources = [
-        SENSOR_PATH.read_text(encoding="utf-8"),
-        BUTTON_PATH.read_text(encoding="utf-8"),
-    ]
+    """Every platform must agree on the identifier or they split into separate devices.
 
-    identifier = 'f"proxy_{self._proxy_id}"'
-    for source in sources:
-        assert identifier in source
+    Device info is built in one place, entity.py, and every proxy entity uses it.
+    """
+    entity = (COMPONENT / "entity.py").read_text(encoding="utf-8")
+    block = entity[entity.index("def proxy_device_info") :]
+    block = block[: block.index("\n\n\ndef ")]
+    assert 'f"proxy_{proxy_id}"' in block
+    assert '"Backup Proxy"' in block
 
-    for source in sources:
-        block = source[source.index(identifier) - 400 : source.index(identifier) + 400]
-        assert '"model": "Backup Proxy"' in block
+    for path in (SENSOR_PATH, BUTTON_PATH):
+        assert "proxy_device_info(self._proxy_id, self._proxy_name)" in path.read_text(
+            encoding="utf-8"
+        )
 
 
 def test_new_device_kinds_can_be_pruned_and_deleted():

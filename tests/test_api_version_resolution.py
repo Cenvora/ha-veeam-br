@@ -35,21 +35,49 @@ SUPPORTED = {
 DEFAULT = "1.3-rev2"
 
 
-def load_resolver(detected=None, raises=None, record=None):
+RESOLVER_NAMES = ("async_resolve_api_version", "_async_server_answers", "ServerUnreachableError")
+
+
+class FakeHttpClient:
+    """Stands in for Home Assistant's shared httpx client."""
+
+    def __init__(self, answers: bool) -> None:
+        self.answers = answers
+
+    async def get(self, url, **kwargs):
+        if not self.answers:
+            raise OSError("connection refused")
+        return types.SimpleNamespace(status_code=404)
+
+
+def load_resolver(detected=None, raises=None, record=None, server_answers=True):
     """Load async_resolve_api_version with veeam_br.discovery stubbed out."""
     tree = ast.parse(RESOLVER_PATH.read_text(encoding="utf-8"))
-    func = next(
+    nodes = [
         node
         for node in tree.body
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "async_resolve_api_version"
-    )
+        if isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef)) and node.name in RESOLVER_NAMES
+    ]
+    assert len(nodes) == len(RESOLVER_NAMES), [node.name for node in nodes]
 
     async def detect_api_version(base_url, *, verify_ssl=True, versions=None, **kwargs):
         if record is not None:
-            record.update(base_url=base_url, verify_ssl=verify_ssl, versions=versions)
+            record.update(
+                base_url=base_url,
+                verify_ssl=verify_ssl,
+                versions=versions,
+                client=kwargs.get("client"),
+            )
         if raises is not None:
             raise raises
         return detected
+
+    http_client = FakeHttpClient(server_answers)
+
+    def get_async_client(hass, verify_ssl=True):
+        if record is not None:
+            record["client_verify_ssl"] = verify_ssl
+        return http_client
 
     # The function imports veeam_br.discovery at call time
     discovery = types.ModuleType("veeam_br.discovery")
@@ -69,12 +97,17 @@ def load_resolver(detected=None, raises=None, record=None):
         "DEFAULT_VERIFY_SSL": True,
         "_LOGGER": types.SimpleNamespace(debug=lambda *a, **k: None, info=lambda *a, **k: None),
         "Any": object,
+        "HomeAssistant": object,
+        "get_async_client": get_async_client,
+        "REACHABILITY_TIMEOUT": 1.0,
     }
     exec(
-        compile(ast.Module(body=[func], type_ignores=[]), str(RESOLVER_PATH), "exec"),
+        compile(ast.Module(body=nodes, type_ignores=[]), str(RESOLVER_PATH), "exec"),
         namespace,
     )
-    return namespace["async_resolve_api_version"]
+    resolver = namespace["async_resolve_api_version"]
+    resolver.unreachable = namespace["ServerUnreachableError"]
+    return resolver
 
 
 def entry(**overrides):
@@ -84,7 +117,7 @@ def entry(**overrides):
 
 
 def resolve(resolver, data):
-    return asyncio.run(resolver(data))
+    return asyncio.run(resolver(object(), data))
 
 
 def test_auto_resolves_to_the_detected_version():
@@ -112,20 +145,39 @@ def test_verify_ssl_is_passed_through():
     resolve(resolver, entry(verify_ssl=False))
 
     assert record["verify_ssl"] is False
+    assert record["client_verify_ssl"] is False
+
+
+def test_detection_reuses_home_assistants_client():
+    """A client of its own would build an SSL context on the event loop."""
+    record = {}
+    resolver = load_resolver(detected="1.3-rev1", record=record)
+
+    resolve(resolver, entry())
+
+    assert isinstance(record["client"], FakeHttpClient)
 
 
 def test_undetectable_server_falls_back_to_the_default():
-    """Swagger may be disabled or gated; setup should still proceed."""
+    """Swagger may be disabled or gated; if the server answers at all, proceed."""
     resolver = load_resolver(detected=None)
 
     assert resolve(resolver, entry()) == DEFAULT
 
 
 def test_detection_failure_falls_back_to_the_default():
-    """A raising probe must not break the config flow."""
+    """A raising probe must not break the config flow while the server is up."""
     resolver = load_resolver(raises=OSError("network unreachable"))
 
     assert resolve(resolver, entry()) == DEFAULT
+
+
+def test_a_server_that_does_not_answer_is_not_given_the_default():
+    """Pinning a fallback while the server is down would outlive the outage."""
+    resolver = load_resolver(detected=None, server_answers=False)
+
+    with pytest.raises(resolver.unreachable):
+        resolve(resolver, entry())
 
 
 @pytest.mark.parametrize("chosen", sorted(SUPPORTED))
@@ -215,7 +267,6 @@ def test_auto_sentinel_is_not_a_real_api_version():
     spec.loader.exec_module(const)
 
     assert const.AUTO_API_VERSION == AUTO
-    assert const.AUTO_API_VERSION not in const.FALLBACK_API_VERSIONS
     assert const.AUTO_API_VERSION not in const.API_VERSIONS
     assert const.AUTO_API_VERSION != const.DEFAULT_API_VERSION
 

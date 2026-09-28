@@ -63,6 +63,14 @@ async def async_get_config_entry_diagnostics(
             "sobrs_count": len(data.get("sobrs", [])),
             "has_server_info": data.get("server_info") is not None,
             "has_license_info": data.get("license_info") is not None,
+            # Which endpoints answered in the last poll. A failed one keeps its previous
+            # data, so the counts above can be stale for it.
+            "fetch_ok": dict(data.get("fetch_ok") or {}),
+            "repositories_without_state": sorted(
+                repo.get("name") or repo.get("id") or "?"
+                for repo in data.get("repositories", [])
+                if repo.get("has_state") is False
+            ),
         },
     }
 
@@ -107,7 +115,10 @@ async def async_get_config_entry_diagnostics(
     if data.get("diagnostics"):
         diagnostics_data["integration_diagnostics"] = {
             "connected": data["diagnostics"].get("connected"),
-            "health_ok": data["diagnostics"].get("health_ok"),
+            # False when any endpoint failed in the last poll, not only when all did
+            "health_ok": bool(coordinator.last_update_success)
+            and bool(data["diagnostics"].get("health_ok")),
+            "failed_endpoints": data["diagnostics"].get("failed_endpoints") or [],
             "last_successful_poll": (
                 data["diagnostics"]["last_successful_poll"].isoformat()
                 if data["diagnostics"].get("last_successful_poll")

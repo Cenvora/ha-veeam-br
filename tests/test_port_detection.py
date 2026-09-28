@@ -35,7 +35,13 @@ def load_finder(endpoint=None, raises=None, record=None):
 
     async def detect_rest_api(host, *, ports=None, versions=None, verify_ssl=True, **kwargs):
         if record is not None:
-            record.update(host=host, ports=ports, versions=versions, verify_ssl=verify_ssl)
+            record.update(
+                host=host,
+                ports=ports,
+                versions=versions,
+                verify_ssl=verify_ssl,
+                client=kwargs.get("client"),
+            )
         if raises is not None:
             raise raises
         return endpoint
@@ -53,6 +59,9 @@ def load_finder(endpoint=None, raises=None, record=None):
         "DEFAULT_VERIFY_SSL": True,
         "_LOGGER": types.SimpleNamespace(debug=lambda *a, **k: None),
         "Any": object,
+        "HomeAssistant": object,
+        # Home Assistant's shared client, reused so no SSL context is built on the loop
+        "get_async_client": lambda hass, verify_ssl=True: ("shared-client", verify_ssl),
     }
     exec(
         compile(ast.Module(body=[func], type_ignores=[]), str(CONFIG_FLOW_PATH), "exec"),
@@ -76,7 +85,7 @@ def data(**overrides):
 def test_reports_the_port_that_answered():
     finder = load_finder(endpoint=Endpoint(443))
 
-    assert asyncio.run(finder(data(), 9419)) == 443
+    assert asyncio.run(finder(object(), data(), 9419)) == 443
 
 
 def test_only_the_other_ports_are_probed():
@@ -84,7 +93,7 @@ def test_only_the_other_ports_are_probed():
     record = {}
     finder = load_finder(endpoint=Endpoint(443), record=record)
 
-    asyncio.run(finder(data(), 9419))
+    asyncio.run(finder(object(), data(), 9419))
 
     assert record["ports"] == [443], "should skip the port already known to fail"
     assert record["host"] == "vbr.example.com"
@@ -96,7 +105,7 @@ def test_a_custom_port_still_gets_both_well_known_ports_probed():
     record = {}
     finder = load_finder(endpoint=Endpoint(443), record=record)
 
-    assert asyncio.run(finder(data(), 8443)) == 443
+    assert asyncio.run(finder(object(), data(), 8443)) == 443
     assert record["ports"] == [443, 9419], "neither well-known port has been ruled out"
 
 
@@ -104,16 +113,17 @@ def test_verify_ssl_is_passed_through():
     record = {}
     finder = load_finder(endpoint=Endpoint(9419), record=record)
 
-    asyncio.run(finder(data(verify_ssl=False), 443))
+    asyncio.run(finder(object(), data(verify_ssl=False), 443))
 
     assert record["verify_ssl"] is False
+    assert record["client"] == ("shared-client", False), "should reuse Home Assistant's client"
 
 
 def test_no_answer_gives_no_advice():
     """Nothing answering means the problem is not the port."""
     finder = load_finder(endpoint=None)
 
-    assert asyncio.run(finder(data(), 443)) is None
+    assert asyncio.run(finder(object(), data(), 443)) is None
 
 
 def test_an_older_library_degrades_to_the_generic_error():
@@ -140,20 +150,23 @@ def test_an_older_library_degrades_to_the_generic_error():
         "DEFAULT_VERIFY_SSL": True,
         "_LOGGER": types.SimpleNamespace(debug=lambda *a, **k: None),
         "Any": object,
+        "HomeAssistant": object,
+        # Home Assistant's shared client, reused so no SSL context is built on the loop
+        "get_async_client": lambda hass, verify_ssl=True: ("shared-client", verify_ssl),
     }
     exec(
         compile(ast.Module(body=[func], type_ignores=[]), str(CONFIG_FLOW_PATH), "exec"),
         namespace,
     )
 
-    assert asyncio.run(namespace["async_find_working_port"](data(), 9419)) is None
+    assert asyncio.run(namespace["async_find_working_port"](object(), data(), 9419)) is None
 
 
 def test_a_failing_probe_is_not_fatal():
     """The probe is a nicety; it must not replace the real connection error."""
     finder = load_finder(raises=OSError("no route to host"))
 
-    assert asyncio.run(finder(data(), 443)) is None
+    assert asyncio.run(finder(object(), data(), 443)) is None
 
 
 # ---------------------------------------------------------------------------
