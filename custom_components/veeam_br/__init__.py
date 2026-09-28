@@ -32,8 +32,10 @@ from .const import (
     DEFAULT_VERIFY_SSL,
     DOMAIN,
     FEATURE_HA_CLUSTER,
+    FEATURE_MALWARE_EVENTS,
+    FEATURE_MALWARE_OBJECTS,
     FEATURE_PROXY_STATES,
-    PAGE_SIZE,
+    PAGE_LIMIT,
     REQUEST_TIMEOUT,
     UPDATE_INTERVAL,
     UPDATE_TIMEOUT,
@@ -42,6 +44,17 @@ from .const import (
 )
 from .display import describe_error, humanize
 from .licensing import describe_license, unsupported_license_reason
+from .malware import (
+    DETECTION_TIME_ONLY,
+    EVENT_MALWARE,
+    RECENT_HOURS,
+    SEVERITIES_OF_CONCERN,
+    MalwareEventTracker,
+    count_by_severity,
+    parse_event,
+    parse_object,
+    summarize_objects,
+)
 from .pruning import async_prune_stale
 from .sdk_patches import patch_models as patch_null_values_in_models
 
@@ -69,6 +82,8 @@ ENDPOINT_LABELS = {
     "proxies": "proxies",
     "wan_accelerators": "WAN accelerators",
     "ha_cluster": "HA cluster",
+    "malware_events": "malware events",
+    "malware_objects": "malware detection objects",
 }
 
 # Repository types that have no immutability of their own. Their Immutable sensor reads
@@ -402,6 +417,7 @@ SINGLETON_KINDS = {
     "server_": "server_info",
     "license_": "license_info",
     "ha_cluster_": "ha_cluster",
+    "security_": "malware_events",
 }
 
 
@@ -552,6 +568,9 @@ def _prepare_sdk(api_version: str, api_module: str) -> Any:
     ]
     if check_api_feature_availability(api_version, FEATURE_HA_CLUSTER):
         modules.append(f"{package}.api.high_availability_ha_cluster.get_high_availability_cluster")
+    for feature in (FEATURE_MALWARE_EVENTS, FEATURE_MALWARE_OBJECTS):
+        if check_api_feature_availability(api_version, feature):
+            modules.append(f"{package}.{feature}")
 
     for module in modules:
         try:
@@ -634,6 +653,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ha_cluster_supported = check_api_feature_availability(api_version, FEATURE_HA_CLUSTER)
     _LOGGER.debug("HA cluster endpoints available on %s: %s", api_version, ha_cluster_supported)
 
+    malware_events_supported = check_api_feature_availability(api_version, FEATURE_MALWARE_EVENTS)
+    malware_objects_supported = check_api_feature_availability(api_version, FEATURE_MALWARE_OBJECTS)
+    # Already imported by _prepare_sdk, so this is a lookup rather than a disk read
+    models = importlib.import_module(f"veeam_br.{api_module}.models")
+    malware_tracker = MalwareEventTracker()
+
     proxy_states_supported = check_api_feature_availability(api_version, FEATURE_PROXY_STATES)
     proxies_endpoint = "get_all_proxies_states" if proxy_states_supported else "get_all_proxies"
     _LOGGER.debug("Proxy states endpoint available on %s: %s", api_version, proxy_states_supported)
@@ -702,7 +727,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
             return None
 
-    async def fetch_all(operation, what: str) -> list:
+    async def fetch_all(operation, what: str, **filters) -> list:
         """Every item of a collection endpoint, following pagination.
 
         The 1.3 revisions return at most 200 items unless asked for more, and say how many
@@ -712,7 +737,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         items: list = []
         skip = 0
         for _ in range(MAX_PAGES):
-            result = await veeam_client.call(operation, skip=skip, limit=PAGE_SIZE)
+            result = await veeam_client.call(operation, skip=skip, limit=PAGE_LIMIT, **filters)
             page = getattr(result, "data", None)
             if not isinstance(page, list):
                 raise UnexpectedResponseError(
@@ -726,7 +751,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if isinstance(total, int) and not isinstance(total, bool):
                 if len(items) >= total:
                     break
-            elif len(page) < PAGE_SIZE:
+            elif len(page) < PAGE_LIMIT:
                 break
             skip += len(page)
         else:
@@ -1154,6 +1179,95 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return ha_cluster
 
+    def parse_malware(items: list, parser, what: str) -> list[dict]:
+        parsed = []
+        for item in items:
+            try:
+                result = parser(item, get_enum_value, get_uuid_value, get_datetime_value)
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning("Failed to parse a %s: %s", what, describe_error(err))
+                continue
+            if result is not None:
+                parsed.append(result)
+        return parsed
+
+    async def fetch_malware_events() -> dict:
+        """The last day's malware events, the latest one, and the ones new since last poll."""
+        malware_api = veeam_client.api("malware_detection")
+        order = models.ESuspiciousActivityEventsFiltersOrderColumn
+        since = dt_util.utcnow() - timedelta(hours=RECENT_HOURS)
+        if api_version in DETECTION_TIME_ONLY:
+            window = {
+                "detected_after_time_utc_filter": since,
+                "order_column": order.DETECTIONTIMEUTC,
+            }
+        else:
+            window = {"created_after_time_utc_filter": since, "order_column": order.CREATIONTIMEUTC}
+        items = await fetch_all(
+            malware_api.view_suspicious_activity_events, "malware events", order_asc=False, **window
+        )
+        recent = parse_malware(items, parse_event, "malware event")
+
+        if (
+            not recent
+            and malware_tracker.last_event is None
+            and not malware_tracker.looked_up_older
+        ):
+            # A quiet day at startup: the latest event overall, so Last Malware Event is not
+            # unknown. One page, newest first, of which only the first item is needed; paging
+            # the whole history to read it would cost more requests, not fewer.
+            result = await veeam_client.call(
+                malware_api.view_suspicious_activity_events,
+                skip=0,
+                limit=PAGE_LIMIT,
+                order_column=window["order_column"],
+                order_asc=False,
+            )
+            older = getattr(result, "data", None)
+            if not isinstance(older, list):
+                raise UnexpectedResponseError(
+                    f"malware events endpoint answered {_describe_response(result)}"
+                )
+            # Newest first: the first one that parses is the latest
+            malware_tracker.last_event = next(
+                (
+                    parsed
+                    for item in older
+                    for parsed in parse_malware([item], parse_event, "malware event")
+                ),
+                None,
+            )
+            malware_tracker.looked_up_older = True
+
+        for event in malware_tracker.update(recent):
+            hass.bus.async_fire(
+                EVENT_MALWARE,
+                {
+                    "entry_id": entry.entry_id,
+                    **{
+                        key: value.isoformat() if hasattr(value, "isoformat") else value
+                        for key, value in event.items()
+                    },
+                },
+            )
+
+        return {
+            "last_event": malware_tracker.last_event,
+            "recent_count": len(recent),
+            "recent_by_severity": count_by_severity(recent),
+        }
+
+    async def fetch_malware_objects() -> dict:
+        """The objects currently marked Infected or Suspicious (1.3-rev2)."""
+        malware_api = veeam_client.api("malware_detection")
+        severity = models.ESuspiciousActivitySeverity
+        items = await fetch_all(
+            malware_api.get_malware_detection_objects,
+            "malware detection objects",
+            severity_filter=[severity(value) for value in SEVERITIES_OF_CONCERN],
+        )
+        return summarize_objects(parse_malware(items, parse_object, "malware detection object"))
+
     async def poll() -> dict:
         """One pass over every endpoint.
 
@@ -1194,6 +1308,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Not in this API revision: nothing was asked, so nothing failed
             ha_cluster, fetch_ok["ha_cluster"] = None, True
 
+        # Not in this API revision: nothing was asked, so nothing failed
+        if malware_events_supported:
+            malware_events = await run("malware_events", fetch_malware_events, None)
+        else:
+            malware_events, fetch_ok["malware_events"] = None, True
+        if malware_objects_supported:
+            malware_objects = await run("malware_objects", fetch_malware_objects, None)
+        else:
+            malware_objects, fetch_ok["malware_objects"] = None, True
+
         if isinstance(repositories_result, tuple):
             repositories, fetch_ok["repository_states"] = repositories_result
         else:
@@ -1221,6 +1345,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "proxies": proxies,
             "wan_accelerators": wan_accelerators,
             "ha_cluster": ha_cluster,
+            "malware_events": malware_events,
+            "malware_objects": malware_objects,
             "fetch_ok": fetch_ok,
             "diagnostics": {
                 "connected": True,

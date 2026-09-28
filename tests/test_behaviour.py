@@ -51,12 +51,17 @@ def error(status: int, message: str = "refused", code: str = "AccessDenied"):
     )
 
 
-def paged(items: list):
-    """A collection endpoint honouring skip/limit and reporting pagination.total."""
+def paged(items: list, cap: int | None = None):
+    """A collection endpoint honouring skip/limit and reporting pagination.total.
+
+    `cap` is a server answering with fewer than asked for, whatever the limit.
+    """
 
     def answer(kwargs):
         skip = kwargs.get("skip") or 0
         limit = kwargs.get("limit") or 200
+        if cap is not None:
+            limit = min(limit, cap)
         return SimpleNamespace(
             data=items[skip : skip + limit], pagination=SimpleNamespace(total=len(items))
         )
@@ -146,6 +151,8 @@ class FakeServer:
             ("high_availability_ha_cluster", "get_high_availability_cluster"): error(
                 400, "HA cluster is not configured", "NotFound"
             ),
+            ("malware_detection", "view_suspicious_activity_events"): paged([]),
+            ("malware_detection", "get_malware_detection_objects"): paged([]),
         }
 
     def handle(self, namespace: str, operation: str, kwargs: dict) -> Any:
@@ -456,13 +463,26 @@ async def test_a_repository_without_state_is_unavailable_not_unknown(
 
 async def test_collections_are_paged_to_the_end(hass: HomeAssistant, server) -> None:
     jobs = [job(f"job-{index}", f"Job {index}") for index in range(450)]
-    server.responses[("jobs", "get_all_jobs_states")] = paged(jobs)
+    # Asked for 10,000 at a time, the server answers 200: still paged to the total
+    server.responses[("jobs", "get_all_jobs_states")] = paged(jobs, cap=200)
     entry = make_entry()
     await setup(hass, entry)
 
     assert len(entry.runtime_data["coordinator"].data["jobs"]) == 450
-    skips = [call[2]["skip"] for call in server.calls if call[1] == "get_all_jobs_states"]
-    assert skips[:3] == [0, 200, 400]
+    calls = [call[2] for call in server.calls if call[1] == "get_all_jobs_states"]
+    assert [call["skip"] for call in calls[:3]] == [0, 200, 400]
+    assert {call["limit"] for call in calls} == {10000}
+
+
+async def test_a_collection_fits_one_request(hass: HomeAssistant, server) -> None:
+    jobs = [job(f"job-{index}", f"Job {index}") for index in range(450)]
+    server.responses[("jobs", "get_all_jobs_states")] = paged(jobs)
+    entry = make_entry()
+    await setup(hass, entry)
+
+    calls = [call[2] for call in server.calls if call[1] == "get_all_jobs_states"]
+    assert len(calls) == 1
+    assert len(entry.runtime_data["coordinator"].data["jobs"]) == 450
 
 
 async def test_a_rejected_session_is_retried_once(hass: HomeAssistant, server) -> None:

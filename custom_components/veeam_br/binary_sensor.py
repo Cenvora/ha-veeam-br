@@ -39,6 +39,7 @@ from .sensor import (
     VeeamLicenseMixin,
     VeeamProxyMixin,
     VeeamRepositoryMixin,
+    VeeamSecurityMixin,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,12 +81,14 @@ async def async_setup_entry(
     server_added = False
     license_added = False
     ha_cluster_added = False
+    malware_detected_added = False
 
     @callback
     def _sync_entities() -> None:
         nonlocal server_added
         nonlocal license_added
         nonlocal ha_cluster_added
+        nonlocal malware_detected_added
 
         if not coordinator.data:
             return
@@ -168,6 +171,11 @@ async def async_setup_entry(
                 ]
             )
             ha_cluster_added = True
+
+        # Detected objects are 1.3-rev2 only: None on older revisions
+        if not malware_detected_added and coordinator.data.get("malware_objects") is not None:
+            new_entities.append(VeeamMalwareDetectedSensor(coordinator, entry))
+            malware_detected_added = True
 
         if new_entities:
             _drop_superseded_sensor_entities(hass, entry, new_entities)
@@ -659,3 +667,45 @@ class VeeamProxyOutOfDateSensor(VeeamProxyBinarySensorBase):
     def is_on(self) -> bool | None:
         proxy = self._proxy()
         return proxy.get("is_out_of_date") if proxy else None
+
+
+# ===========================
+# SECURITY BINARY SENSORS (one device per server)
+# ===========================
+
+
+class VeeamMalwareDetectedSensor(VeeamSecurityMixin, CoordinatorEntity, BinarySensorEntity):
+    """Problem while any backed-up object is marked Infected or Suspicious (1.3-rev2).
+
+    The ``objects`` attribute lists the most recently detected ones, for a notification.
+    """
+
+    endpoint = "malware_objects"
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator, config_entry):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamSecurityMixin.__init__(self, coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_security_malware_detected"
+        self._attr_name = "Malware Detected"
+
+    @property
+    def is_on(self) -> bool | None:
+        security = self._security()
+        if not security:
+            return None
+        return bool(security.get("infected") or security.get("suspicious"))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        security = self._security() or {}
+        return {
+            "infected": security.get("infected"),
+            "suspicious": security.get("suspicious"),
+            "objects": security.get("objects") or [],
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:shield-alert" if self.is_on else "mdi:shield-check"

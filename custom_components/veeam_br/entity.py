@@ -114,6 +114,15 @@ def ha_cluster_device_info(entry: ConfigEntry, data: dict[str, Any] | None) -> d
     )
 
 
+def security_device_info(entry: ConfigEntry, data: dict[str, Any] | None) -> dict[str, Any]:
+    """Malware detection, one per server."""
+    return _device(
+        f"security_{entry.entry_id}",
+        device_name("Security", server_label(entry, data)),
+        "Security",
+    )
+
+
 def endpoint_ok(data: dict[str, Any] | None, key: str) -> bool:
     """Whether this cycle's fetch of one endpoint succeeded.
 
