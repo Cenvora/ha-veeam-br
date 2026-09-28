@@ -263,6 +263,18 @@
     },
     "action_rejected": {
       "message": "Veeam 拒绝对 {target} 执行“{action}”：{error}"
+    },
+    "entry_not_found": {
+      "message": "没有 ID 为 {entry_id} 的 Veeam Backup & Replication 条目"
+    },
+    "entry_not_loaded": {
+      "message": "{title} 未加载"
+    },
+    "move_copy_unsupported": {
+      "message": "无法通过 API 版本 {api_version} 管理移动/复制会话；需要 1.3-rev2（Veeam B&R 13.1）"
+    },
+    "invalid_session_id": {
+      "message": "{session_id} 不是会话 ID"
     }
   },
   "selector": {
@@ -289,12 +301,39 @@
         "expired": "已过期",
         "invalid": "无效"
       }
+    },
+    "move_copy_action": {
+      "options": {
+        "retry": "重试",
+        "forget_failed": "分离失败项",
+        "stop_and_undo": "停止并撤消"
+      }
     }
   },
   "issues": {
     "unsupported_license": {
       "title": "{host} 上的 Veeam 许可证不受支持",
       "description": "位于 **{host}** 的 Veeam Backup & Replication 服务器报告的许可证为 **{license}**。\n\n此集成不支持 Veeam Community Edition 以及未安装许可证的服务器：授权范围不同，部分 REST API 端点的响应方式不同或根本不响应，因此实体可能缺失或不可靠。\n\n集成会继续运行，不会阻止任何功能。如果遇到问题，请在错误报告中注明此许可证版本。安装受支持的许可证或移除此集成即可清除此警告。"
+    }
+  },
+  "services": {
+    "manage_move_copy_session": {
+      "name": "管理移动/复制会话",
+      "description": "重试、分离失败项，或停止并撤消等待决定的备份移动或复制。需要 Veeam B&R 13.1（API 1.3-rev2）和 Backup Administrator 角色。",
+      "fields": {
+        "config_entry_id": {
+          "name": "服务器",
+          "description": "会话所在的 Veeam Backup & Replication 服务器。"
+        },
+        "session_id": {
+          "name": "会话 ID",
+          "description": "会话的 ID，来自 Move/Copy Sessions Awaiting Action 的 sessions 属性或 veeam_br_move_copy_action_required 事件。"
+        },
+        "action": {
+          "name": "操作",
+          "description": "对会话执行的操作。"
+        }
+      }
     }
   }
 }

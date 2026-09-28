@@ -263,6 +263,18 @@
     },
     "action_rejected": {
       "message": "Veeam rechazó {action} {target}: {error}"
+    },
+    "entry_not_found": {
+      "message": "No hay ninguna entrada de Veeam Backup & Replication con el ID {entry_id}"
+    },
+    "entry_not_loaded": {
+      "message": "{title} no está cargado"
+    },
+    "move_copy_unsupported": {
+      "message": "Las sesiones de movimiento/copia no se pueden gestionar con la versión de API {api_version}; requieren 1.3-rev2 (Veeam B&R 13.1)"
+    },
+    "invalid_session_id": {
+      "message": "{session_id} no es un ID de sesión"
     }
   },
   "selector": {
@@ -289,12 +301,39 @@
         "expired": "Expirada",
         "invalid": "Inválida"
       }
+    },
+    "move_copy_action": {
+      "options": {
+        "retry": "Reintentar",
+        "forget_failed": "Desvincular fallidos",
+        "stop_and_undo": "Detener y deshacer"
+      }
     }
   },
   "issues": {
     "unsupported_license": {
       "title": "Licencia de Veeam no compatible en {host}",
       "description": "El servidor de Veeam Backup & Replication **{host}** informa la licencia **{license}**.\n\nVeeam Community Edition y los servidores sin licencia instalada no son compatibles con esta integración: los derechos son distintos y algunos endpoints de la API REST responden de otra forma o no responden, por lo que pueden faltar entidades o no ser fiables.\n\nLa integración sigue funcionando: no se bloquea nada. Si encuentras problemas, incluye esta edición de licencia en tu informe de error. Instala una licencia compatible, o elimina la integración, para quitar este aviso."
+    }
+  },
+  "services": {
+    "manage_move_copy_session": {
+      "name": "Gestionar sesión de movimiento/copia",
+      "description": "Reintentar, desvincular lo fallido o detener y deshacer un movimiento o copia de copia de seguridad que espera una decisión. Veeam B&R 13.1 (API 1.3-rev2), rol Backup Administrator.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Servidor",
+          "description": "El servidor Veeam Backup & Replication de la sesión."
+        },
+        "session_id": {
+          "name": "ID de sesión",
+          "description": "El ID de la sesión, del atributo sessions de Move/Copy Sessions Awaiting Action o del evento veeam_br_move_copy_action_required."
+        },
+        "action": {
+          "name": "Acción",
+          "description": "Qué hacer con la sesión."
+        }
+      }
     }
   }
 }

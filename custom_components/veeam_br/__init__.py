@@ -13,7 +13,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.ssl import get_default_context, get_default_no_verify_context
@@ -34,6 +35,8 @@ from .const import (
     FEATURE_HA_CLUSTER,
     FEATURE_MALWARE_EVENTS,
     FEATURE_MALWARE_OBJECTS,
+    FEATURE_MANAGE_MOVE_COPY,
+    FEATURE_MOVE_COPY_SESSIONS,
     FEATURE_PROXY_STATES,
     PAGE_LIMIT,
     REQUEST_TIMEOUT,
@@ -55,12 +58,16 @@ from .malware import (
     parse_object,
     summarize_objects,
 )
+from .move_copy import EVENT_MOVE_COPY, NewSessionTracker, parse_session, summarize_sessions
 from .pruning import async_prune_stale
 from .sdk_patches import patch_models as patch_null_values_in_models
+from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.BUTTON]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # Failures to reach the server at all, as veeam-br lets them through. TimeoutError is an
 # OSError, so it is covered too.
@@ -84,6 +91,7 @@ ENDPOINT_LABELS = {
     "ha_cluster": "HA cluster",
     "malware_events": "malware events",
     "malware_objects": "malware detection objects",
+    "move_copy_sessions": "move/copy sessions awaiting action",
 }
 
 # Repository types that have no immutability of their own. Their Immutable sensor reads
@@ -568,7 +576,12 @@ def _prepare_sdk(api_version: str, api_module: str) -> Any:
     ]
     if check_api_feature_availability(api_version, FEATURE_HA_CLUSTER):
         modules.append(f"{package}.api.high_availability_ha_cluster.get_high_availability_cluster")
-    for feature in (FEATURE_MALWARE_EVENTS, FEATURE_MALWARE_OBJECTS):
+    for feature in (
+        FEATURE_MALWARE_EVENTS,
+        FEATURE_MALWARE_OBJECTS,
+        FEATURE_MOVE_COPY_SESSIONS,
+        FEATURE_MANAGE_MOVE_COPY,
+    ):
         if check_api_feature_availability(api_version, feature):
             modules.append(f"{package}.{feature}")
 
@@ -579,6 +592,12 @@ def _prepare_sdk(api_version: str, api_module: str) -> Any:
             _LOGGER.debug("Could not pre-import %s: %s", module, err)
 
     return unset
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the service actions, which name the config entry they act on."""
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -658,6 +677,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Already imported by _prepare_sdk, so this is a lookup rather than a disk read
     models = importlib.import_module(f"veeam_br.{api_module}.models")
     malware_tracker = MalwareEventTracker()
+
+    move_copy_supported = check_api_feature_availability(api_version, FEATURE_MOVE_COPY_SESSIONS)
+    move_copy_tracker = NewSessionTracker()
+    # Cleared when the server refuses the account (Backup Administrator only), until a reload
+    move_copy_permitted = True
 
     proxy_states_supported = check_api_feature_availability(api_version, FEATURE_PROXY_STATES)
     proxies_endpoint = "get_all_proxies_states" if proxy_states_supported else "get_all_proxies"
@@ -1257,6 +1281,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "recent_by_severity": count_by_severity(recent),
         }
 
+    async def fetch_move_copy_sessions(jobs: list[dict]) -> dict | None:
+        """Move/copy sessions awaiting a decision (1.3-rev2); None if the account may not ask.
+
+        A plain array, not a paged collection, so there is no limit to set.
+        """
+        nonlocal move_copy_permitted
+        backups_api = veeam_client.api("backups")
+        result = await veeam_client.call(backups_api.get_move_copy_sessions)
+        if not isinstance(result, list):
+            extras = getattr(result, "additional_properties", None) or {}
+            if isinstance(extras, dict) and extras.get("status") == 403:
+                move_copy_permitted = False
+                _LOGGER.info(
+                    "Not monitoring move/copy sessions awaiting action on %s: the server "
+                    "allows that to the Backup Administrator role only. Reload the "
+                    "integration after changing the account's role",
+                    host,
+                )
+                return None
+            raise UnexpectedResponseError(
+                f"move/copy sessions endpoint answered {_describe_response(result)}"
+            )
+
+        job_names = {job["id"]: job.get("name") for job in jobs if job.get("id")}
+        sessions = []
+        for session in result:
+            try:
+                parsed = parse_session(
+                    session, job_names, get_enum_value, get_uuid_value, get_datetime_value
+                )
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning("Failed to parse a move/copy session: %s", describe_error(err))
+                continue
+            if parsed is not None:
+                sessions.append(parsed)
+
+        for session in move_copy_tracker.update(sessions):
+            hass.bus.async_fire(EVENT_MOVE_COPY, {"entry_id": entry.entry_id, **session})
+        return summarize_sessions(sessions)
+
     async def fetch_malware_objects() -> dict:
         """The objects currently marked Infected or Suspicious (1.3-rev2)."""
         malware_api = veeam_client.api("malware_detection")
@@ -1317,6 +1381,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             malware_objects = await run("malware_objects", fetch_malware_objects, None)
         else:
             malware_objects, fetch_ok["malware_objects"] = None, True
+        if move_copy_supported and move_copy_permitted:
+            move_copy_sessions = await run(
+                "move_copy_sessions", lambda: fetch_move_copy_sessions(jobs), None
+            )
+        else:
+            move_copy_sessions, fetch_ok["move_copy_sessions"] = None, True
 
         if isinstance(repositories_result, tuple):
             repositories, fetch_ok["repository_states"] = repositories_result
@@ -1347,6 +1417,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "ha_cluster": ha_cluster,
             "malware_events": malware_events,
             "malware_objects": malware_objects,
+            "move_copy_sessions": move_copy_sessions,
             "fetch_ok": fetch_ok,
             "diagnostics": {
                 "connected": True,

@@ -263,6 +263,18 @@
     },
     "action_rejected": {
       "message": "Veeam odrzucił operację {action} dla {target}: {error}"
+    },
+    "entry_not_found": {
+      "message": "Brak wpisu Veeam Backup & Replication o ID {entry_id}"
+    },
+    "entry_not_loaded": {
+      "message": "{title} nie jest załadowany"
+    },
+    "move_copy_unsupported": {
+      "message": "Sesjami przenoszenia/kopiowania nie można zarządzać przez wersję API {api_version}; wymagają 1.3-rev2 (Veeam B&R 13.1)"
+    },
+    "invalid_session_id": {
+      "message": "{session_id} nie jest ID sesji"
     }
   },
   "selector": {
@@ -289,12 +301,39 @@
         "expired": "Wygasła",
         "invalid": "Nieważna"
       }
+    },
+    "move_copy_action": {
+      "options": {
+        "retry": "Ponów",
+        "forget_failed": "Odłącz nieudane",
+        "stop_and_undo": "Zatrzymaj i cofnij"
+      }
     }
   },
   "issues": {
     "unsupported_license": {
       "title": "Nieobsługiwana licencja Veeam na {host}",
       "description": "Serwer Veeam Backup & Replication **{host}** zgłasza licencję **{license}**.\n\nVeeam Community Edition oraz serwery bez zainstalowanej licencji nie są obsługiwane przez tę integrację: uprawnienia są inne, a niektóre punkty końcowe REST API odpowiadają inaczej lub wcale, więc encji może brakować lub mogą być niewiarygodne.\n\nIntegracja nadal działa — nic nie jest blokowane. Jeśli napotkasz problemy, podaj tę edycję licencji w zgłoszeniu błędu. Zainstaluj obsługiwaną licencję lub usuń integrację, aby usunąć to ostrzeżenie."
+    }
+  },
+  "services": {
+    "manage_move_copy_session": {
+      "name": "Zarządzaj sesją przenoszenia/kopiowania",
+      "description": "Ponów, odłącz nieudane albo zatrzymaj i cofnij przenoszenie lub kopiowanie kopii zapasowej, które czeka na decyzję. Veeam B&R 13.1 (API 1.3-rev2), rola Backup Administrator.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Serwer",
+          "description": "Serwer Veeam Backup & Replication, na którym jest sesja."
+        },
+        "session_id": {
+          "name": "ID sesji",
+          "description": "ID sesji z atrybutu sessions czujnika Move/Copy Sessions Awaiting Action lub ze zdarzenia veeam_br_move_copy_action_required."
+        },
+        "action": {
+          "name": "Akcja",
+          "description": "Co zrobić z sesją."
+        }
+      }
     }
   }
 }

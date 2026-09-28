@@ -60,6 +60,7 @@ async def async_setup_entry(
     ha_cluster_added = False
     malware_events_added = False
     malware_objects_added = False
+    move_copy_added = False
 
     @callback
     def _sync_entities() -> None:
@@ -68,6 +69,7 @@ async def async_setup_entry(
         nonlocal ha_cluster_added
         nonlocal malware_events_added
         nonlocal malware_objects_added
+        nonlocal move_copy_added
 
         if not coordinator.data:
             return
@@ -272,6 +274,11 @@ async def async_setup_entry(
                 ]
             )
             malware_objects_added = True
+
+        # 1.3-rev2, and only for an account the server lets ask: None otherwise
+        if not move_copy_added and coordinator.data.get("move_copy_sessions") is not None:
+            new_entities.append(VeeamMoveCopySessionsSensor(coordinator, entry))
+            move_copy_added = True
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam sensors", len(new_entities))
@@ -1738,3 +1745,47 @@ class VeeamMalwareObjectsSensor(VeeamSecurityBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:biohazard" if self._severity == "infected" else "mdi:shield-search"
+
+
+# ===========================
+# MOVE/COPY SESSIONS AWAITING ACTION (server device, 1.3-rev2)
+# ===========================
+
+
+class VeeamMoveCopySessionsSensor(VeeamServerBaseSensor):
+    """How many backup moves or copies are waiting for a decision, and which.
+
+    Settle one with the ``veeam_br.manage_move_copy_session`` action and a session ID from
+    the ``sessions`` attribute.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_server_move_copy_sessions"
+        self._attr_name = "Move/Copy Sessions Awaiting Action"
+
+    def _sessions(self) -> dict[str, Any] | None:
+        return self.coordinator.data.get("move_copy_sessions") if self.coordinator.data else None
+
+    @property
+    def available(self) -> bool:
+        return (
+            CoordinatorEntity.available.fget(self)
+            and endpoint_ok(self.coordinator.data, "move_copy_sessions")
+            and self._sessions() is not None
+        )
+
+    @property
+    def native_value(self) -> int | None:
+        sessions = self._sessions()
+        return sessions.get("count") if sessions else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"sessions": (self._sessions() or {}).get("sessions") or []}
+
+    @property
+    def icon(self) -> str:
+        return "mdi:swap-horizontal-circle" if self.native_value else "mdi:swap-horizontal"
