@@ -158,11 +158,13 @@ The integration creates devices for each monitored object (jobs, repositories, s
 
 ### Device and entity names
 
-Every device is named `VBR <kind> <name>` — *VBR Job Nightly VMs*, *VBR Repository Default
-Backup Repository*, *VBR Server vbr01*, *VBR License vbr01*, *VBR SOBR …*, *VBR Proxy …*,
-*VBR WAN Accelerator …*, *VBR HA Cluster …*. Entity names follow the device, so a new install
-gets entity IDs such as `sensor.vbr_job_nightly_vms_last_result` and
-`binary_sensor.vbr_repository_default_backup_repository_online`.
+Every device is named `VBR <kind> <name>` — *VBR Job Nightly VMs*, *VBR Server vbr01*,
+*VBR License vbr01*, *VBR SOBR …*, *VBR Proxy …*, *VBR WAN Accelerator …*, *VBR HA Cluster …*.
+The kind is left out when the name already says it, so *Default Backup Repository* becomes
+*VBR Default Backup Repository*. Entity names follow the device, so a new install gets entity
+IDs such as `sensor.vbr_job_nightly_vms_last_result` and
+`binary_sensor.vbr_default_backup_repository_online`. The VB365 integration names its devices
+by the same rule with a `VB365` prefix, so the two never collide.
 
 The prefix keeps this integration's entities together and apart from the Veeam Backup for
 Microsoft 365 integration, whose devices start with `VB365 `. Without it, a *Default Backup

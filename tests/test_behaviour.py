@@ -243,13 +243,13 @@ def state(hass: HomeAssistant, entity_id: str) -> str | None:
     return current.state if current else None
 
 
-REPO_ONLINE = "binary_sensor.vbr_repository_default_backup_repository_online"
-REPO_CAPACITY = "sensor.vbr_repository_default_backup_repository_capacity"
-REPO_TYPE = "sensor.vbr_repository_default_backup_repository_type"
-REPO_RESCAN = "button.vbr_repository_default_backup_repository_rescan"
-TEMP_CAPACITY = "sensor.vbr_repository_temp_local_repository_capacity"
-TEMP_TYPE = "sensor.vbr_repository_temp_local_repository_type"
-TEMP_IMMUTABLE = "binary_sensor.vbr_repository_temp_local_repository_immutable"
+REPO_ONLINE = "binary_sensor.vbr_default_backup_repository_online"
+REPO_CAPACITY = "sensor.vbr_default_backup_repository_capacity"
+REPO_TYPE = "sensor.vbr_default_backup_repository_type"
+REPO_RESCAN = "button.vbr_default_backup_repository_rescan"
+TEMP_CAPACITY = "sensor.vbr_temp_local_repository_capacity"
+TEMP_TYPE = "sensor.vbr_temp_local_repository_type"
+TEMP_IMMUTABLE = "binary_sensor.vbr_temp_local_repository_immutable"
 JOB_START = "button.vbr_job_nightly_vms_start"
 CONNECTED = "binary_sensor.vbr_server_vbr01_connected"
 HEALTH_OK = "binary_sensor.vbr_server_vbr01_health_ok"
@@ -275,7 +275,7 @@ async def test_setup_creates_prefixed_entities(hass: HomeAssistant, server) -> N
         device.name
         for device in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     }
-    assert "VBR Repository Default Backup Repository" in devices
+    assert "VBR Default Backup Repository" in devices
     assert "VBR Job Nightly VMs" in devices
     assert "VBR Server vbr01" in devices
     assert "VBR License vbr01" in devices

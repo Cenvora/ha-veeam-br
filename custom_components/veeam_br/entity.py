@@ -4,7 +4,8 @@ Every platform builds the same devices, so their names and identifiers are defin
 Identifiers are unchanged from earlier releases — changing them would orphan every existing
 device — and only the display names follow the scheme below.
 
-Device names are "VBR <kind> <name>", e.g. "VBR Job Nightly VMs" or "VBR Server vbr01".
+Device names are "VBR <kind> <name>", e.g. "VBR Job Nightly VMs" or "VBR Server vbr01",
+with the kind left out when the name already contains it ("VBR Default Backup Repository").
 Entities use has_entity_name, so a new entity's ID starts with the device name
 (sensor.vbr_job_nightly_vms_last_result). Existing entities keep the IDs already in the
 registry; only their friendly names change.
@@ -12,6 +13,7 @@ registry; only their friendly names change.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -23,11 +25,17 @@ MANUFACTURER = "Veeam"
 
 
 def device_name(kind: str, name: str | None) -> str:
-    """Name a device: the prefix, what the device is, then its own name.
+    """Name a device "VBR <kind> <name>", leaving out the kind when the name says it.
 
-    For example "VBR Job Nightly VMs" or "VBR Repository Default Backup Repository".
+    "Nightly VMs" becomes "VBR Job Nightly VMs", but "Default Backup Repository" becomes
+    "VBR Default Backup Repository" rather than "VBR Repository Default Backup Repository".
+    The VB365 integration names its devices by the same rule.
     """
-    return " ".join(part for part in (DEVICE_NAME_PREFIX, kind, name) if part)
+    if not name:
+        return f"{DEVICE_NAME_PREFIX} {kind}"
+    if re.search(rf"\b{re.escape(kind)}\b", name, re.IGNORECASE):
+        return f"{DEVICE_NAME_PREFIX} {name}"
+    return f"{DEVICE_NAME_PREFIX} {kind} {name}"
 
 
 def _device(identifier: str, name: str, model: str) -> dict[str, Any]:
