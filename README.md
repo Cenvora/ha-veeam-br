@@ -189,6 +189,10 @@ Each backup job creates a device with the following sensors:
     outcome of the last run is on the **Last Result** sensor, not here
 - **Type Sensor**: `sensor.vbr_job_<job_name>_type`
   - State: Type of backup job
+- **Target Sensor**: `sensor.vbr_job_<job_name>_target` (diagnostic)
+  - State: Where the job writes to. API `1.3-rev2` names the target for every job type; on
+    earlier API versions this is the backup repository. `target_source` says which
+    (`target` or `repository`); `repository_name` and `repository_id` are attributes
 - **Last Run Sensor**: `sensor.vbr_job_<job_name>_last_run`
   - State: Timestamp of the last job execution
 - **Next Run Sensor**: `sensor.vbr_job_<job_name>_next_run`

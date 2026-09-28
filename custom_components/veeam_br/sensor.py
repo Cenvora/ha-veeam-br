@@ -97,6 +97,7 @@ async def async_setup_entry(
                     [
                         VeeamJobStatusSensor(coordinator, entry, job),
                         VeeamJobTypeSensor(coordinator, entry, job),
+                        VeeamJobTargetSensor(coordinator, entry, job),
                         VeeamJobLastRunSensor(coordinator, entry, job),
                         VeeamJobNextRunSensor(coordinator, entry, job),
                         VeeamJobLastResultSensor(coordinator, entry, job),
@@ -489,6 +490,46 @@ class VeeamJobTypeSensor(VeeamJobBaseSensor):
         """The unprettified API value, for automations that match exactly."""
         data = self._job()
         return {"raw_value": data.get("type_raw") if data else None}
+
+
+class VeeamJobTargetSensor(VeeamJobBaseSensor):
+    """Where the job writes to.
+
+    API 1.3-rev2 reports the target by name, whatever the job type. Earlier revisions report
+    only the backup repository, so that is shown instead; ``target_source`` says which.
+    """
+
+    def __init__(self, coordinator, config_entry, job_data):
+        super().__init__(coordinator, config_entry, job_data)
+        self._attr_unique_id = f"{config_entry.entry_id}_job_{self._job_id}_target"
+        self._attr_name = "Target"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> str | None:
+        job = self._job()
+        if not job:
+            return None
+        return job.get("target_name") or job.get("repository_name")
+
+    @property
+    def icon(self) -> str:
+        return "mdi:target"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        job = self._job() or {}
+        if job.get("target_name"):
+            source = "target"
+        elif job.get("repository_name"):
+            source = "repository"
+        else:
+            source = None
+        return {
+            "target_source": source,
+            "repository_name": job.get("repository_name"),
+            "repository_id": job.get("repository_id"),
+        }
 
 
 class VeeamJobLastRunSensor(VeeamJobBaseSensor):

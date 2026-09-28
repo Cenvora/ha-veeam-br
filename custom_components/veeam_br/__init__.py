@@ -246,6 +246,11 @@ def _parse_ha_cluster(cluster, get_enum_value, get_uuid_value, serialize_value) 
     return parsed
 
 
+def _text_or_none(value) -> str | None:
+    """A non-empty string, or None for UNSET, null and empty values."""
+    return value if isinstance(value, str) and value else None
+
+
 def _is_unset(value) -> bool:
     """Whether a generated model returned its "absent" sentinel."""
     return value is None or getattr(type(value), "__name__", "") == "Unset"
@@ -873,6 +878,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "last_result_raw": get_enum_value(job.last_result),
                         "last_run": get_datetime_value(job.last_run),
                         "next_run": get_datetime_value(job.next_run),
+                        # targetName arrived in 1.3-rev2; earlier revisions have only the
+                        # repository, which is the target of most job types
+                        "target_name": _text_or_none(getattr(job, "target_name", None)),
+                        "repository_name": _text_or_none(getattr(job, "repository_name", None)),
+                        "repository_id": get_uuid_value(getattr(job, "repository_id", None)),
                     }
                 )
             except (ValueError, KeyError, AttributeError, TypeError) as err:
