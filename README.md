@@ -154,20 +154,42 @@ The integration polls the Veeam Backup & Replication server every **60 seconds**
 
 ## Entities
 
-The integration creates devices for each monitored object (jobs, repositories, server, license), with multiple sensor entities per device:
+The integration creates devices for each monitored object (jobs, repositories, server, license), with multiple sensor entities per device.
+
+### Device and entity names
+
+Every device is named `VBR <kind> <name>` — *VBR Job Nightly VMs*, *VBR Server vbr01*,
+*VBR License vbr01*, *VBR SOBR …*, *VBR Proxy …*, *VBR WAN Accelerator …*, *VBR HA Cluster …*.
+The kind is left out when the name already says it, so *Default Backup Repository* becomes
+*VBR Default Backup Repository*. Entity names follow the device, so a new install gets entity
+IDs such as `sensor.vbr_job_nightly_vms_last_result` and
+`binary_sensor.vbr_default_backup_repository_online`. The VB365 integration names its devices
+by the same rule with a `VB365` prefix, so the two never collide.
+
+The prefix keeps this integration's entities together and apart from the Veeam Backup for
+Microsoft 365 integration, whose devices start with `VB365 `. Without it, a *Default Backup
+Repository* on each server produced colliding IDs, and Home Assistant suffixed one set with
+`_2`.
+
+> [!NOTE]
+> Entities that already exist keep their entity IDs — Home Assistant stores them in the entity
+> registry, and renaming them would break automations and dashboards. Only the friendly names
+> change. To move an existing install onto the new IDs, open **Settings → Devices & services →
+> Entities**, select the Veeam entities, and choose **Recreate entity IDs** (or rename them one
+> by one), then update anything that referenced the old IDs.
 
 ### Job Devices
 
 Each backup job creates a device with the following sensors:
 
-- **Status Sensor**: `sensor.<job_name>_status`
+- **Status Sensor**: `sensor.vbr_job_<job_name>_status`
   - State: What the job is doing (`Running`, `Inactive`, `Disabled`) — the pass/fail
     outcome of the last run is on the **Last Result** sensor, not here
-- **Type Sensor**: `sensor.<job_name>_type`
+- **Type Sensor**: `sensor.vbr_job_<job_name>_type`
   - State: Type of backup job
-- **Last Run Sensor**: `sensor.<job_name>_last_run`
+- **Last Run Sensor**: `sensor.vbr_job_<job_name>_last_run`
   - State: Timestamp of the last job execution
-- **Next Run Sensor**: `sensor.<job_name>_next_run`
+- **Next Run Sensor**: `sensor.vbr_job_<job_name>_next_run`
   - State: Timestamp of the next scheduled run
 
 ### Other Devices
@@ -232,7 +254,7 @@ automation:
   - alias: "Veeam HA failover started"
     trigger:
       - platform: state
-        entity_id: binary_sensor.vbr_ha_example_com_failover_in_progress
+        entity_id: binary_sensor.vbr_ha_cluster_vbr01_failover_in_progress
         to: "on"
     action:
       - service: notify.notify
@@ -240,7 +262,7 @@ automation:
           title: "Veeam HA failover in progress"
           message: >
             Secondary node lag was
-            {{ states('sensor.vbr_ha_example_com_secondary_node_lag') }} MB.
+            {{ states('sensor.vbr_ha_cluster_vbr01_secondary_node_lag') }} MB.
 ```
 
 ## Automation Blueprints
@@ -321,13 +343,13 @@ automation:
   - alias: "Notify on Veeam Backup Failure"
     trigger:
       - platform: state
-        entity_id: sensor.my_backup_job_status
+        entity_id: sensor.vbr_job_my_backup_job_last_result
         to: "failed"
     action:
       - service: notify.notify
         data:
           title: "Veeam Backup Failed"
-          message: "Backup job {{ trigger.to_state.name | replace(' Status', '') }} has failed!"
+          message: "Backup job {{ trigger.to_state.name | replace(' Last Result', '') }} has failed!"
 ```
 
 ### Daily Backup Status Report
@@ -408,6 +430,31 @@ All devices and entities associated with this integration will be removed.
 - Verify the Veeam server and REST API are running
 - Try re-authenticating the integration
 
+Each endpoint (jobs, repositories, repository states, SOBRs, proxies, …) is fetched on its
+own. When one fails, only its entities go unavailable, and they keep their last values and
+come back on the next successful poll — nothing is deleted over a failed fetch. The server's
+**Health OK** sensor turns off while any endpoint is failing, and lists which in its
+`failed_endpoints` attribute; **Connected** turns off only when the server does not answer at
+all. Failures are logged once when they start and once when they recover.
+
+A repository whose capacity, free space and online sensors are unavailable while its type and
+description are not is missing from Veeam's repository *states* response. The log names it
+once, with its type. Its **Immutable** sensor still reports, since that comes from the
+repository's configuration.
+
+### Duplicate entities with `_2`
+
+Home Assistant adds `_2` when a new entity's ID is already taken. Two causes:
+
+- **Another integration with a device of the same name.** Veeam Backup for Microsoft 365 also
+  creates a *Default Backup Repository*, and both integrations used the bare repository name,
+  so their *Online*, *Immutable*, *Type*… entities collided. Devices are now prefixed (`VBR `
+  here, `VB365 ` there), which prevents this for new entities; rename or recreate the entity
+  IDs of existing ones as described under [Device and entity names](#device-and-entity-names).
+- **Two config entries for the same server**, for instance one on port 443 and one on 9419.
+  Each creates every entity. The setup flow now refuses a second entry for a host that is
+  already configured, and a warning is logged at startup if two exist; remove one of them.
+
 ### High API Load
 
 **Problem**: Veeam server experiencing high API load
@@ -461,7 +508,7 @@ Every sensor whose state is a label also carries the untouched API value as a `r
 attribute, so automations that need to match exactly have something stable:
 
 ```yaml
-{{ state_attr('sensor.nightly_vms_last_result', 'raw_value') == 'Failed' }}
+{{ state_attr('sensor.vbr_job_nightly_vms_last_result', 'raw_value') == 'Failed' }}
 ```
 
 > [!NOTE]

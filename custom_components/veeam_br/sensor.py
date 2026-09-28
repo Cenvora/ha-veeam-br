@@ -7,19 +7,34 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    CONF_API_VERSION,
-    DEFAULT_API_VERSION,
-    DOMAIN,
+    FEATURE_HA_CLUSTER,
+    FEATURE_JOBS,
+    FEATURE_LICENSE,
+    FEATURE_PROXIES,
+    FEATURE_REPOSITORIES,
+    FEATURE_SERVICE,
+    FEATURE_WAN_ACCELERATORS,
     check_api_feature_availability,
     configured_api_version,
 )
+from .entity import (
+    endpoint_ok,
+    ha_cluster_device_info,
+    job_device_info,
+    license_device_info,
+    proxy_device_info,
+    repository_device_info,
+    server_device_info,
+    sobr_device_info,
+    wan_device_info,
+)
+from .pruning import forget_missing, reported_ids
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,7 +74,7 @@ async def async_setup_entry(
 
         # ---- JOB SENSORS (dynamic) - Each job becomes a device with multiple sensors ----
         # Jobs data comes from jobs API, only create if available
-        if check_api_feature_availability(api_version, "api.jobs"):
+        if check_api_feature_availability(api_version, FEATURE_JOBS):
             for job in coordinator.data.get("jobs", []):
                 job_id = job.get("id")
                 if not job_id or job_id in added_job_ids:
@@ -79,7 +94,7 @@ async def async_setup_entry(
 
         # ---- REPOSITORY SENSORS (dynamic) - Each repository becomes a device with multiple sensors ----
         # Repository data comes from repositories API, only create if available
-        if check_api_feature_availability(api_version, "api.repositories"):
+        if check_api_feature_availability(api_version, FEATURE_REPOSITORIES):
             for repository in coordinator.data.get("repositories", []):
                 repo_id = repository.get("id")
                 if not repo_id or repo_id in added_repository_ids:
@@ -111,7 +126,7 @@ async def async_setup_entry(
 
         # ---- SOBR SENSORS (dynamic) - Each SOBR becomes a device with multiple sensors ----
         # SOBR data comes from repositories API, only create if available
-        if check_api_feature_availability(api_version, "api.repositories"):
+        if check_api_feature_availability(api_version, FEATURE_REPOSITORIES):
             for sobr in coordinator.data.get("sobrs", []):
                 sobr_id = sobr.get("id")
                 if not sobr_id or sobr_id in added_sobr_ids:
@@ -132,7 +147,7 @@ async def async_setup_entry(
                 )
 
         # ---- PROXY SENSORS (dynamic) - one device per backup proxy ----
-        if check_api_feature_availability(api_version, "api.proxies"):
+        if check_api_feature_availability(api_version, FEATURE_PROXIES):
             for proxy in coordinator.data.get("proxies", []):
                 proxy_id = proxy.get("id")
                 if not proxy_id or proxy_id in added_proxy_ids:
@@ -147,7 +162,7 @@ async def async_setup_entry(
                 _LOGGER.debug("Adding proxy sensors for: %s", proxy.get("name"))
 
         # ---- WAN ACCELERATOR SENSORS (dynamic) - one device per accelerator ----
-        if check_api_feature_availability(api_version, "api.wan_accelerators"):
+        if check_api_feature_availability(api_version, FEATURE_WAN_ACCELERATORS):
             for accelerator in coordinator.data.get("wan_accelerators", []):
                 wan_id = accelerator.get("id")
                 if not wan_id or wan_id in added_wan_ids:
@@ -162,7 +177,7 @@ async def async_setup_entry(
         if (
             not server_added
             and coordinator.data.get("server_info")
-            and check_api_feature_availability(api_version, "api.service")
+            and check_api_feature_availability(api_version, FEATURE_SERVICE)
         ):
             new_entities.extend(
                 [
@@ -182,7 +197,7 @@ async def async_setup_entry(
         if (
             not license_added
             and coordinator.data.get("license_info")
-            and check_api_feature_availability(api_version, "api.license_")
+            and check_api_feature_availability(api_version, FEATURE_LICENSE)
         ):
             new_entities.extend(
                 [
@@ -213,7 +228,7 @@ async def async_setup_entry(
         if (
             not ha_cluster_added
             and coordinator.data.get("ha_cluster")
-            and check_api_feature_availability(api_version, "api.high_availability_ha_cluster")
+            and check_api_feature_availability(api_version, FEATURE_HA_CLUSTER)
         ):
             new_entities.extend(
                 [
@@ -236,120 +251,19 @@ async def async_setup_entry(
             _LOGGER.debug("Adding %d Veeam sensors", len(new_entities))
             async_add_entities(new_entities)
 
-        # Remove stale entities (jobs/repos/sobrs that no longer exist)
-        _remove_stale_entities(hass, entry, added_job_ids, added_repository_ids, added_sobr_ids)
-
-    def _remove_stale_entities(
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        current_job_ids: set[str],
-        current_repo_ids: set[str],
-        current_sobr_ids: set[str],
-    ) -> None:
-        """Remove entities and devices for jobs/repos/sobrs that no longer exist.
-
-        Scans the entity registry directly so that entities persisted from
-        previous HA sessions are also cleaned up, not only those added in the
-        current session.
-        """
-        if not coordinator.data:
-            return
-
-        entity_reg = er.async_get(hass)
-        device_reg = dr.async_get(hass)
-        entry_id = entry.entry_id
-
-        # Get current IDs from coordinator data
-        current_jobs_in_data = {
-            job.get("id") for job in coordinator.data.get("jobs", []) if job.get("id")
-        }
-        current_repos_in_data = {
-            repo.get("id") for repo in coordinator.data.get("repositories", []) if repo.get("id")
-        }
-        current_sobrs_in_data = {
-            sobr.get("id") for sobr in coordinator.data.get("sobrs", []) if sobr.get("id")
-        }
-
-        # Build unique_id prefixes for active jobs/repos/sobrs
-        active_job_prefixes = {f"{entry_id}_job_{job_id}_" for job_id in current_jobs_in_data}
-        active_repo_prefixes = {
-            f"{entry_id}_repository_{repo_id}_" for repo_id in current_repos_in_data
-        }
-        active_sobr_prefixes = {f"{entry_id}_sobr_{sobr_id}_" for sobr_id in current_sobrs_in_data}
-
-        # Scan all registered entities for this config entry and remove stale ones.
-        # Using list() to avoid mutating the iterable while iterating.
-        for entity in list(er.async_entries_for_config_entry(entity_reg, entry_id)):
-            if not entity.unique_id:
-                continue
-            unique_id = entity.unique_id
-
-            if unique_id.startswith(f"{entry_id}_job_"):
-                if not any(unique_id.startswith(p) for p in active_job_prefixes):
-                    _LOGGER.info("Removing stale job entity: %s", entity.entity_id)
-                    entity_reg.async_remove(entity.entity_id)
-
-            elif unique_id.startswith(f"{entry_id}_repository_"):
-                if not any(unique_id.startswith(p) for p in active_repo_prefixes):
-                    _LOGGER.info("Removing stale repository entity: %s", entity.entity_id)
-                    entity_reg.async_remove(entity.entity_id)
-
-            elif unique_id.startswith(f"{entry_id}_sobr_"):
-                if not any(unique_id.startswith(p) for p in active_sobr_prefixes):
-                    _LOGGER.info("Removing stale SOBR entity: %s", entity.entity_id)
-                    entity_reg.async_remove(entity.entity_id)
-
-        # An empty collection is indistinguishable from a fetch that failed and degraded
-        # gracefully, so pruning on empty would delete every job device the first time the
-        # jobs endpoint errored. Deleting the last job of a kind is left to the per-device
-        # Delete button, which async_remove_config_entry_device now allows.
-        prunable = {
-            "job_": bool(current_jobs_in_data),
-            "repository_": bool(current_repos_in_data),
-            "sobr_": bool(current_sobrs_in_data),
-        }
-        for prefix, allowed in prunable.items():
-            if not allowed:
-                _LOGGER.debug(
-                    "Not pruning %s devices: nothing reported this cycle, which may be a "
-                    "failed fetch rather than a deletion",
-                    prefix.rstrip("_"),
-                )
-
-        # Remove orphaned devices for jobs/repos/sobrs no longer present in API data.
-        for device in list(dr.async_entries_for_config_entry(device_reg, entry_id)):
-            for domain, identifier in device.identifiers:
-                if domain != DOMAIN:
-                    continue
-                if identifier.startswith("job_"):
-                    job_id = identifier[len("job_") :]
-                    if job_id not in current_jobs_in_data and prunable["job_"]:
-                        _LOGGER.info("Removing stale job device: %s", device.name)
-                        device_reg.async_remove_device(device.id)
-                        break
-                elif identifier.startswith("repository_"):
-                    repo_id = identifier[len("repository_") :]
-                    if repo_id not in current_repos_in_data and prunable["repository_"]:
-                        _LOGGER.info("Removing stale repository device: %s", device.name)
-                        device_reg.async_remove_device(device.id)
-                        break
-                elif identifier.startswith("sobr_"):
-                    sobr_id = identifier[len("sobr_") :]
-                    if sobr_id not in current_sobrs_in_data and prunable["sobr_"]:
-                        _LOGGER.info("Removing stale SOBR device: %s", device.name)
-                        device_reg.async_remove_device(device.id)
-                        break
-
-        # Update tracking sets to reflect only IDs still present in the API
-        current_job_ids.intersection_update(current_jobs_in_data)
-        current_repo_ids.intersection_update(current_repos_in_data)
-        current_sobr_ids.intersection_update(current_sobrs_in_data)
+        # Objects the server stopped reporting are removed by the shared sweep (pruning.py);
+        # forgetting them here lets them be added again if they come back
+        forget_missing(added_job_ids, reported_ids(coordinator.data, "jobs"))
+        forget_missing(added_repository_ids, reported_ids(coordinator.data, "repositories"))
+        forget_missing(added_sobr_ids, reported_ids(coordinator.data, "sobrs"))
+        forget_missing(added_proxy_ids, reported_ids(coordinator.data, "proxies"))
+        forget_missing(added_wan_ids, reported_ids(coordinator.data, "wan_accelerators"))
 
     # First attempt (after first refresh already ran)
     _sync_entities()
 
     # Future updates
-    coordinator.async_add_listener(_sync_entities)
+    entry.async_on_unload(coordinator.async_add_listener(_sync_entities))
 
 
 # ===========================
@@ -369,16 +283,18 @@ class VeeamLicenseMixin:
         return self.coordinator.data.get("license_info") if self.coordinator.data else None
 
     @property
+    def available(self) -> bool:
+        """Stale license data from before a failed fetch is not shown as current."""
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, "license_info")
+            and self._license_info() is not None
+        )
+
+    @property
     def device_info(self):
         """Return device info for the Veeam license."""
-        return {
-            "identifiers": {(DOMAIN, f"license_{self._config_entry.entry_id}")},
-            # Qualified by host: a hardcoded name is indistinguishable once a second
-            # server is added (issue #82)
-            "name": f"Veeam License ({self._config_entry.data.get(CONF_HOST, 'Unknown')})",
-            "manufacturer": "Veeam",
-            "model": "License",
-        }
+        return license_device_info(self._config_entry, self.coordinator.data)
 
 
 class VeeamRepositoryMixin:
@@ -390,6 +306,10 @@ class VeeamRepositoryMixin:
         self._repo_id = repository_data.get("id")
         self._repo_name = repository_data.get("name", "Unknown Repository")
 
+    # Entities reading capacity or online state set this: those come from the repository
+    # states endpoint, which can fail on its own or leave a repository out
+    _needs_state = False
+
     def _repository(self) -> dict[str, Any] | None:
         """Get repository data from coordinator."""
         if not self.coordinator.data:
@@ -400,14 +320,19 @@ class VeeamRepositoryMixin:
         return None
 
     @property
+    def available(self) -> bool:
+        """Unavailable, rather than unknown, when there is nothing current to show."""
+        if not super().available or not endpoint_ok(self.coordinator.data, "repositories"):
+            return False
+        repo = self._repository()
+        if repo is None:
+            return False
+        return not self._needs_state or bool(repo.get("has_state", True))
+
+    @property
     def device_info(self):
         """Return device info for this repository."""
-        return {
-            "identifiers": {(DOMAIN, f"repository_{self._repo_id}")},
-            "name": f"{self._repo_name}",
-            "manufacturer": "Veeam",
-            "model": "Backup Repository",
-        }
+        return repository_device_info(self._repo_id, self._repo_name)
 
 
 # ===========================
@@ -435,14 +360,18 @@ class VeeamJobBaseSensor(CoordinatorEntity, SensorEntity):
         return None
 
     @property
+    def available(self) -> bool:
+        """Unavailable while the jobs fetch fails or the job is no longer reported."""
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, "jobs")
+            and self._job() is not None
+        )
+
+    @property
     def device_info(self):
         """Return device info for this job."""
-        return {
-            "identifiers": {(DOMAIN, f"job_{self._job_id}")},
-            "name": f"{self._job_name}",
-            "manufacturer": "Veeam",
-            "model": "Backup Job",
-        }
+        return job_device_info(self._job_id, self._job_name)
 
 
 class VeeamJobStatusSensor(VeeamJobBaseSensor):
@@ -599,19 +528,14 @@ class VeeamServerBaseSensor(CoordinatorEntity, SensorEntity):
         return self.coordinator.data.get("server_info") if self.coordinator.data else None
 
     @property
+    def available(self) -> bool:
+        """Stale server details from before a failed fetch are not shown as current."""
+        return super().available and endpoint_ok(self.coordinator.data, "server_info")
+
+    @property
     def device_info(self):
         """Return device info for the Veeam server."""
-        server_info = self._server_info()
-        # Fall back to the configured host rather than a bare "Unknown": when server info
-        # fails to fetch, every entry's device would otherwise carry the same name (#82)
-        host = self._config_entry.data.get(CONF_HOST, "Unknown")
-        server_name = (server_info.get("name") if server_info else None) or host
-        return {
-            "identifiers": {(DOMAIN, f"server_{self._config_entry.entry_id}")},
-            "name": f"{server_name}",
-            "manufacturer": "Veeam",
-            "model": "Backup & Replication Server",
-        }
+        return server_device_info(self._config_entry, self.coordinator.data)
 
 
 class VeeamServerBuildVersionSensor(VeeamServerBaseSensor):
@@ -737,6 +661,11 @@ class VeeamServerLastSuccessfulPollSensor(VeeamServerBaseSensor):
         self._attr_name = "Last Successful Poll"
         self._attr_device_class = SensorDeviceClass.TIMESTAMP
         self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def available(self) -> bool:
+        """Most useful exactly when polling fails, so it stays available then."""
+        return self.coordinator.data is not None
 
     @property
     def native_value(self):
@@ -985,6 +914,8 @@ class VeeamRepositoryDescriptionSensor(VeeamRepositoryBaseSensor):
 class VeeamRepositoryCapacitySensor(VeeamRepositoryBaseSensor):
     """Sensor for Veeam Repository Total Capacity."""
 
+    _needs_state = True
+
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator, config_entry, repository_data)
         self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_capacity"
@@ -1008,6 +939,8 @@ class VeeamRepositoryCapacitySensor(VeeamRepositoryBaseSensor):
 
 class VeeamRepositoryFreeSpaceSensor(VeeamRepositoryBaseSensor):
     """Sensor for Veeam Repository Free Space."""
+
+    _needs_state = True
 
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator, config_entry, repository_data)
@@ -1033,6 +966,8 @@ class VeeamRepositoryFreeSpaceSensor(VeeamRepositoryBaseSensor):
 class VeeamRepositoryUsedSpaceSensor(VeeamRepositoryBaseSensor):
     """Sensor for Veeam Repository Used Space."""
 
+    _needs_state = True
+
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator, config_entry, repository_data)
         self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_used_space"
@@ -1056,6 +991,8 @@ class VeeamRepositoryUsedSpaceSensor(VeeamRepositoryBaseSensor):
 
 class VeeamRepositoryUsedSpacePercentSensor(VeeamRepositoryBaseSensor):
     """Sensor for Veeam Repository Used Space Percentage."""
+
+    _needs_state = True
 
     def __init__(self, coordinator, config_entry, repository_data):
         super().__init__(coordinator, config_entry, repository_data)
@@ -1134,14 +1071,18 @@ class VeeamSOBRMixin:
         return None
 
     @property
+    def available(self) -> bool:
+        """Unavailable while the SOBR fetch fails or the SOBR is no longer reported."""
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, "sobrs")
+            and self._sobr() is not None
+        )
+
+    @property
     def device_info(self):
         """Return device info for this SOBR."""
-        return {
-            "identifiers": {(DOMAIN, f"sobr_{self._sobr_id}")},
-            "name": f"{self._sobr_name}",
-            "manufacturer": "Veeam",
-            "model": "Scale-Out Backup Repository",
-        }
+        return sobr_device_info(self._sobr_id, self._sobr_name)
 
 
 class VeeamSOBRBaseSensor(VeeamSOBRMixin, CoordinatorEntity, SensorEntity):
@@ -1222,20 +1163,16 @@ class VeeamHAClusterMixin:
     @property
     def available(self) -> bool:
         """A cluster that stops being reported should not keep showing stale values."""
-        return super().available and self._cluster() is not None
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, "ha_cluster")
+            and self._cluster() is not None
+        )
 
     @property
     def device_info(self):
         """Return device info for the HA cluster."""
-        cluster = self._cluster()
-        name = (cluster.get("name") if cluster else None) or "HA Cluster"
-        host = self._config_entry.data.get(CONF_HOST, "Unknown")
-        return {
-            "identifiers": {(DOMAIN, f"ha_cluster_{self._config_entry.entry_id}")},
-            "name": f"{name} ({host})",
-            "manufacturer": "Veeam",
-            "model": "High Availability Cluster",
-        }
+        return ha_cluster_device_info(self._config_entry, self.coordinator.data)
 
 
 class VeeamHAClusterBaseSensor(VeeamHAClusterMixin, CoordinatorEntity, SensorEntity):
@@ -1527,17 +1464,16 @@ class VeeamProxyMixin:
     @property
     def available(self) -> bool:
         """A proxy removed from the server should not keep reporting."""
-        return super().available and self._proxy() is not None
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, "proxies")
+            and self._proxy() is not None
+        )
 
     @property
     def device_info(self):
         """Return device info for this proxy."""
-        return {
-            "identifiers": {(DOMAIN, f"proxy_{self._proxy_id}")},
-            "name": self._proxy_name,
-            "manufacturer": "Veeam",
-            "model": "Backup Proxy",
-        }
+        return proxy_device_info(self._proxy_id, self._proxy_name)
 
 
 class VeeamProxyBaseSensor(VeeamProxyMixin, CoordinatorEntity, SensorEntity):
@@ -1605,17 +1541,16 @@ class VeeamWanAcceleratorMixin:
 
     @property
     def available(self) -> bool:
-        return super().available and self._accelerator() is not None
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, "wan_accelerators")
+            and self._accelerator() is not None
+        )
 
     @property
     def device_info(self):
         """Return device info for this WAN accelerator."""
-        return {
-            "identifiers": {(DOMAIN, f"wan_{self._wan_id}")},
-            "name": self._wan_name,
-            "manufacturer": "Veeam",
-            "model": "WAN Accelerator",
-        }
+        return wan_device_info(self._wan_id, self._wan_name)
 
 
 class VeeamWanAcceleratorCacheSensor(VeeamWanAcceleratorMixin, CoordinatorEntity, SensorEntity):

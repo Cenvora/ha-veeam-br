@@ -17,13 +17,23 @@ from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, check_api_feature_availability, configured_api_version
+from .const import (
+    FEATURE_HA_CLUSTER,
+    FEATURE_LICENSE,
+    FEATURE_PROXY_STATES,
+    FEATURE_REPOSITORIES,
+    FEATURE_SERVICE,
+    check_api_feature_availability,
+    configured_api_version,
+)
+from .entity import server_device_info
+from .pruning import forget_missing, reported_ids
 from .sensor import (
     VeeamHAClusterMixin,
     VeeamLicenseMixin,
@@ -83,7 +93,7 @@ async def async_setup_entry(
         api_version = configured_api_version(entry)
         new_entities: list[BinarySensorEntity] = []
 
-        if check_api_feature_availability(api_version, "api.repositories"):
+        if check_api_feature_availability(api_version, FEATURE_REPOSITORIES):
             for repository in coordinator.data.get("repositories", []):
                 repo_id = repository.get("id")
                 if not repo_id or repo_id in added_repository_ids:
@@ -104,7 +114,7 @@ async def async_setup_entry(
         # All three of these read fields that only the proxy states endpoint returns, and
         # that endpoint arrived in 1.3-rev0 — on an older server they would be permanently
         # unknown, so the entities are not created at all (issue #104).
-        if check_api_feature_availability(api_version, "api.proxies.get_all_proxies_states"):
+        if check_api_feature_availability(api_version, FEATURE_PROXY_STATES):
             for proxy in coordinator.data.get("proxies", []):
                 proxy_id = proxy.get("id")
                 if not proxy_id or proxy_id in added_proxy_ids:
@@ -122,7 +132,7 @@ async def async_setup_entry(
         if (
             not server_added
             and coordinator.data.get("server_info")
-            and check_api_feature_availability(api_version, "api.service")
+            and check_api_feature_availability(api_version, FEATURE_SERVICE)
         ):
             new_entities.extend(
                 [
@@ -135,7 +145,7 @@ async def async_setup_entry(
         if (
             not license_added
             and coordinator.data.get("license_info")
-            and check_api_feature_availability(api_version, "api.license_")
+            and check_api_feature_availability(api_version, FEATURE_LICENSE)
         ):
             new_entities.extend(
                 [
@@ -148,7 +158,7 @@ async def async_setup_entry(
         if (
             not ha_cluster_added
             and coordinator.data.get("ha_cluster")
-            and check_api_feature_availability(api_version, "api.high_availability_ha_cluster")
+            and check_api_feature_availability(api_version, FEATURE_HA_CLUSTER)
         ):
             new_entities.extend(
                 [
@@ -164,8 +174,14 @@ async def async_setup_entry(
             _LOGGER.debug("Adding %d Veeam binary sensors", len(new_entities))
             async_add_entities(new_entities)
 
+        # Removal itself is the shared sweep's job (pruning.py). Forgetting what it removed
+        # is what lets these come back: without it an object that vanished for one poll
+        # never regained its binary sensors until Home Assistant restarted.
+        forget_missing(added_repository_ids, reported_ids(coordinator.data, "repositories"))
+        forget_missing(added_proxy_ids, reported_ids(coordinator.data, "proxies"))
+
     _sync_entities()
-    coordinator.async_add_listener(_sync_entities)
+    entry.async_on_unload(coordinator.async_add_listener(_sync_entities))
 
 
 class VeeamServerBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
@@ -181,19 +197,18 @@ class VeeamServerBinarySensorBase(CoordinatorEntity, BinarySensorEntity):
         return self.coordinator.data.get("server_info") if self.coordinator.data else None
 
     @property
+    def available(self) -> bool:
+        """Always available: these report the connection, so a failed poll is "off".
+
+        CoordinatorEntity would mark them unavailable whenever an update fails, which is
+        exactly when they have something to say — so they could never read "off".
+        """
+        return True
+
+    @property
     def device_info(self):
         """Return device info for the Veeam server."""
-        server_info = self._server_info()
-        # Fall back to the configured host rather than a bare "Unknown": when server info
-        # fails to fetch, every entry's device would otherwise carry the same name (#82)
-        host = self._config_entry.data.get(CONF_HOST, "Unknown")
-        server_name = (server_info.get("name") if server_info else None) or host
-        return {
-            "identifiers": {(DOMAIN, f"server_{self._config_entry.entry_id}")},
-            "name": f"{server_name}",
-            "manufacturer": "Veeam",
-            "model": "Backup & Replication Server",
-        }
+        return server_device_info(self._config_entry, self.coordinator.data)
 
 
 class VeeamLicenseBinarySensorBase(VeeamLicenseMixin, CoordinatorEntity, BinarySensorEntity):
@@ -265,8 +280,17 @@ class VeeamServerHealthOkSensor(VeeamServerBinarySensorBase):
 
     @property
     def is_on(self) -> bool | None:
-        # Health reflects the current update status
-        return self.coordinator.last_update_success
+        """Healthy when the last poll worked and every endpoint answered in it."""
+        if not self.coordinator.last_update_success:
+            return False
+        diagnostics = (self.coordinator.data or {}).get("diagnostics") or {}
+        return bool(diagnostics.get("health_ok", True))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Which endpoints failed, so "off" says where to look."""
+        diagnostics = (self.coordinator.data or {}).get("diagnostics") or {}
+        return {"failed_endpoints": diagnostics.get("failed_endpoints") or []}
 
     @property
     def icon(self) -> str:
@@ -360,6 +384,8 @@ class VeeamLicenseCloudConnectSensor(VeeamLicenseBinarySensorBase):
 class VeeamRepositoryOnlineStatusSensor(VeeamRepositoryBinarySensorBase):
     """Binary sensor for Veeam Repository Online Status."""
 
+    _needs_state = True
+
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -385,6 +411,8 @@ class VeeamRepositoryOnlineStatusSensor(VeeamRepositoryBinarySensorBase):
 
 class VeeamRepositoryOutOfDateSensor(VeeamRepositoryBinarySensorBase):
     """Binary sensor for Veeam Repository Out of Date Status."""
+
+    _needs_state = True
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -437,6 +465,8 @@ class VeeamRepositoryImmutableSensor(VeeamRepositoryBinarySensorBase):
 class VeeamRepositoryAccessibleSensor(VeeamRepositoryBinarySensorBase):
     """Binary sensor for Veeam Repository Accessible status."""
 
+    _needs_state = True
+
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -463,6 +493,8 @@ class VeeamRepositoryAccessibleSensor(VeeamRepositoryBinarySensorBase):
 class VeeamRepositoryCapacityWarningSensor(VeeamRepositoryBinarySensorBase):
     """Binary sensor for Veeam Repository Capacity Warning (< 15% free)."""
 
+    _needs_state = True
+
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 
     def __init__(self, coordinator, config_entry, repository_data):
@@ -486,6 +518,8 @@ class VeeamRepositoryCapacityWarningSensor(VeeamRepositoryBinarySensorBase):
 
 class VeeamRepositoryCapacityCriticalSensor(VeeamRepositoryBinarySensorBase):
     """Binary sensor for Veeam Repository Capacity Critical (< 5% free)."""
+
+    _needs_state = True
 
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
 

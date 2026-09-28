@@ -1,7 +1,5 @@
 """Basic validation tests for Veeam BR integration."""
 
-import pytest
-
 
 def test_manifest_valid():
     """Test that manifest.json is valid and contains required fields."""
@@ -287,55 +285,25 @@ def test_async_dependency():
 
 
 def test_stale_entity_cleanup_uses_registry_scan():
-    """Test that stale entity cleanup scans the registry directly (not just session-tracked IDs).
+    """Stale entity cleanup scans the registry directly, once, for every platform.
 
-    The cleanup must scan the entity registry rather than comparing session-scoped
-    tracking sets so that entities persisted from previous HA sessions are also
-    removed when their corresponding job/repo/SOBR no longer exists.
+    Scanning the registry (rather than session-tracked IDs) is what removes entities persisted
+    from earlier sessions. It lives in pruning.py: when each platform ran its own scan, the
+    sensor platform deleted the binary sensors and buttons of any repository missing from a
+    single poll.
     """
     from pathlib import Path
 
-    sensor_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "sensor.py"
-    button_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "button.py"
+    base = Path(__file__).parent.parent / "custom_components" / "veeam_br"
+    pruning = (base / "pruning.py").read_text(encoding="utf-8")
 
-    with open(sensor_path) as f:
-        sensor_content = f.read()
+    assert "async_entries_for_config_entry" in pruning
+    assert "device_reg.async_remove_device" in pruning
+    # A device another entry still uses is detached, not deleted
+    assert "remove_config_entry_id=entry_id" in pruning
 
-    with open(button_path) as f:
-        button_content = f.read()
-
-    # The old approach iterated over stale_job_ids (session-scoped diff) and matched
-    # entity unique_ids by substring. The new approach must scan the full registry
-    # using async_entries_for_config_entry and compare against current API data.
-    # Verify the new approach is used instead of the old set-difference pattern.
-    assert (
-        "stale_job_ids = current_job_ids - current_jobs_in_data" not in sensor_content
-    ), "sensor.py should not use session-scoped set-difference for stale job detection"
-    assert (
-        "stale_repo_ids = current_repo_ids - current_repos_in_data" not in sensor_content
-    ), "sensor.py should not use session-scoped set-difference for stale repo detection"
-    assert (
-        "stale_sobr_ids = current_sobr_ids - current_sobrs_in_data" not in sensor_content
-    ), "sensor.py should not use session-scoped set-difference for stale SOBR detection"
-    assert (
-        "stale_job_ids = current_job_ids - current_jobs_in_data" not in button_content
-    ), "button.py should not use session-scoped set-difference for stale job detection"
-
-    # Verify that the cleanup uses entity registry scanning
-    assert (
-        "async_entries_for_config_entry" in sensor_content
-    ), "sensor.py stale cleanup should scan the entity registry"
-    assert (
-        "async_entries_for_config_entry" in button_content
-    ), "button.py stale cleanup should scan the entity registry"
-
-    # Verify that device registry cleanup is present in sensor.py
-    assert (
-        "device_registry" in sensor_content or "dr.async_get" in sensor_content
-    ), "sensor.py should clean up orphaned devices from the device registry"
-    assert (
-        "async_remove_device" in sensor_content
-    ), "sensor.py should remove orphaned devices via device_registry.async_remove_device"
+    init = (base / "__init__.py").read_text(encoding="utf-8")
+    assert "async_prune_stale(hass, entry, coordinator.data)" in init
 
 
 def test_validate_input_reraises_permission_error():
@@ -408,63 +376,74 @@ def test_user_step_preserves_input_on_error():
 
 
 def test_hlr_immutability_logic():
-    """Test that Linux Hardened Repository immutability is extracted from makeRecentBackupsImmutableDays."""
+    """Immutability is read from wherever each repository kind reports it."""
+    import ast
     from pathlib import Path
 
     init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
+    tree = ast.parse(init_path.read_text(encoding="utf-8"))
+    nodes = [
+        node
+        for node in tree.body
+        if (isinstance(node, ast.FunctionDef) and node.name == "_repository_immutability")
+        or (
+            isinstance(node, ast.Assign)
+            and getattr(node.targets[0], "id", "") == "NON_IMMUTABLE_REPOSITORY_TYPES"
+        )
+    ]
+    namespace = {}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(init_path), "exec"), namespace)
+    immutability = namespace["_repository_immutability"]
 
-    with open(init_path) as f:
-        content = f.read()
+    # Linux hardened: makeRecentBackupsImmutableDays
+    hardened = {"repository": {"makeRecentBackupsImmutableDays": 7}}
+    assert immutability("LinuxHardened", hardened) == (True, 7)
+    assert immutability("LinuxHardened", {"repository": {"makeRecentBackupsImmutableDays": 0}}) == (
+        False,
+        None,
+    )
 
-    # Verify HLR immutability logic is present
-    assert (
-        "makeRecentBackupsImmutableDays" in content
-    ), "__init__.py should check makeRecentBackupsImmutableDays for Linux Hardened repos"
-    # Verify that HLR check is guarded so it doesn't override S3 immutability
-    assert (
-        '"is_immutable" not in repo_dict' in content
-    ), "HLR immutability check should only run when S3 immutability was not already found"
+    # Object storage: bucket.immutability, which wins over anything else
+    bucket = {"bucket": {"immutability": {"isEnabled": True, "daysCount": 30}}, **hardened}
+    assert immutability("AmazonS3", bucket) == (True, 30)
+    assert immutability("AmazonS3", {"bucket": {"immutability": {"isEnabled": False}}}) == (
+        False,
+        None,
+    )
+
+    # Linux local on 13.x: governance mode
+    governance = {"repository": {"enableGovernanceMode": True, "governanceModeRetentionDays": 14}}
+    assert immutability("LinuxLocal", governance) == (True, 14)
+    assert immutability("LinuxLocal", {"repository": {"path": "/backups"}}) == (False, None)
+
+    # Data Domain / StoreOnce: repository.immutability
+    dd = {"repository": {"immutability": {"isEnabled": True, "daysCount": 5}}}
+    assert immutability("DellDataDomain", dd) == (True, 5)
+
+    # Kinds with no immutability at all read False; the unknown stay unknown
+    assert immutability("WinLocal", {}) == (False, None)
+    assert immutability("Smb", {}) == (False, None)
+    assert immutability("AzureBlob", {}) == (None, None)
 
 
 def test_api_v1_2_rev1_jobs_error_handling():
-    """Test that jobs API errors are handled gracefully for v1.2-rev1 compatibility.
+    """Test that one job failing to parse does not lose the others.
 
     In API v1.2-rev1 the veeam_br library may raise ValueError (from dict(string))
-    when parsing some response fields. The integration must catch those errors so
-    that setup succeeds instead of raising UpdateFailed with an opaque dict error.
+    when parsing some response fields. A whole response that fails to parse fails the jobs
+    endpoint, which keeps its previous data (see test_behaviour.py); a single job that fails
+    to parse is skipped and logged.
     """
     from pathlib import Path
-    import re
 
     init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
+    content = init_path.read_text(encoding="utf-8")
 
-    with open(init_path) as f:
-        content = f.read()
-
-    # Jobs section must now be wrapped in its own try/except so that
-    # ValueError (the exact dict-construction error reported by the user) and
-    # KeyError / AttributeError / TypeError (other parsing failures) are caught
-    # and logged rather than propagating to the outer UpdateFailed handler.
-    # Use a regex to scope checks to the jobs error-handling block around the
-    # "Failed to parse jobs API response" log message.
-    jobs_error_match = re.search(
-        r"(.{0,400}Failed to parse jobs API response.{0,400})",
-        content,
-        flags=re.DOTALL,
-    )
-    assert (
-        jobs_error_match is not None
-    ), "__init__.py should catch jobs API parsing errors and log them gracefully"
-    jobs_error_block = jobs_error_match.group(1)
-
-    # The per-job inner loop must also catch ValueError (e.g. unknown enum values)
-    # not just AttributeError/TypeError as before.
-    # Check that all four exception types are present within the jobs outer
-    # try/except block, without requiring a specific tuple order.
+    block = content[content.index("async def fetch_jobs") :]
+    block = block[: block.index("async def fetch_server_info")]
+    assert "Failed to parse job" in block
     for exc_type in ("ValueError", "KeyError", "AttributeError", "TypeError"):
-        assert (
-            exc_type in jobs_error_block
-        ), f"__init__.py jobs outer try/except should catch {exc_type}"
+        assert exc_type in block, f"the per-job handler should catch {exc_type}"
 
 
 def test_api_v1_2_rev1_sobr_extent_status():
@@ -505,25 +484,19 @@ def test_null_value_patch_is_applied_before_any_request():
     from pathlib import Path
 
     init_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "__init__.py"
+    content = init_path.read_text(encoding="utf-8")
 
-    with open(init_path) as f:
-        content = f.read()
+    assert "from .sdk_patches import" in content
 
-    assert (
-        "from .sdk_patches import" in content
-    ), "__init__.py should apply the model patches from sdk_patches"
+    prepare = content[content.index("def _prepare_sdk") :]
+    prepare = prepare[: prepare.index("\nasync def ")]
+    assert "patch_null_values_in_models(" in prepare
 
-    patch_call = content.index("patch_null_values_in_models(")
-    connect_call = content.index("await veeam_client.connect()")
-    assert patch_call < connect_call, (
-        "models must be patched before the client connects, so no response is parsed by "
-        "an unpatched model"
-    )
-
-    # Patching imports modules, which blocks; it must not run on the event loop.
-    assert (
-        "await asyncio.to_thread(patch_models)" in content
-    ), "model patching does blocking imports and should run via asyncio.to_thread"
+    # Patching imports modules, which blocks: it runs in an executor, before connecting
+    setup = content[content.index("async def async_setup_entry") :]
+    executor = setup.index("async_add_executor_job(_prepare_sdk")
+    connect = setup.index("await veeam_client.connect()")
+    assert executor < connect
 
 
 def test_config_flow_does_not_import_on_the_event_loop():
@@ -564,31 +537,27 @@ def test_devices_are_distinguishable_across_servers():
     """Test that device names identify their server (issue #82).
 
     With two entries configured, a hardcoded or "Unknown" device name appears twice and
-    the user cannot tell the servers apart.
+    the user cannot tell the servers apart. Names are built in entity.py.
     """
     from pathlib import Path
 
-    sensor_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "sensor.py"
+    entity_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "entity.py"
+    content = entity_path.read_text(encoding="utf-8")
 
-    with open(sensor_path) as f:
-        content = f.read()
+    license_block = content[content.index("def license_device_info") :]
+    license_block = license_block[: license_block.index("\n\n\ndef ")]
+    assert "server_label(entry, data)" in license_block, "the license is named per server"
 
-    assert (
-        '"name": "Veeam License"' not in content
-    ), "the license device name must be qualified per entry, not hardcoded"
-    assert (
-        'server_info.get("name", "Unknown") if server_info else "Unknown"' not in content
-    ), "the server device should fall back to the configured host, not a shared 'Unknown'"
-    assert (
-        content.count("Veeam License (") == 1
-    ), "the license device name should include the configured host"
+    label = content[content.index("def server_label") :]
+    label = label[: label.index("\n\n\ndef ")]
+    assert "CONF_HOST" in label, "falls back to the configured host, not a shared 'Unknown'"
 
 
 def _load_const():
     """Load const.py standalone.
 
-    const.py imports only the standard library, so it can be loaded without Home
-    Assistant installed (unlike the rest of the integration package).
+    const.py imports only the standard library and veeam-br's version table, so it can be
+    loaded without Home Assistant installed (unlike the rest of the integration package).
     """
     import importlib.util
     from pathlib import Path
@@ -604,15 +573,9 @@ def test_api_1_3_rev2_supported():
     """Test that API version 1.3-rev2 (Veeam B&R 13.1) is supported and is the default."""
     const = _load_const()
 
-    assert (
-        "1.3-rev2" in const.FALLBACK_API_VERSIONS
-    ), "1.3-rev2 must be in the fallback API version list (Veeam B&R 13.1)"
-    assert const.FALLBACK_API_VERSIONS["1.3-rev2"] == "v1_3_rev2"
+    assert const.API_VERSIONS["1.3-rev2"] == "v1_3_rev2"
     assert const.DEFAULT_API_VERSION == "1.3-rev2", "Default API version should be the newest"
     assert const.DEFAULT_API_MODULE == "v1_3_rev2"
-    assert (
-        const.DEFAULT_API_VERSION in const.FALLBACK_API_VERSIONS
-    ), "DEFAULT_API_VERSION must be a known API version"
 
 
 def test_manifest_requires_a_recent_enough_veeam_br():
@@ -631,12 +594,14 @@ def test_manifest_requires_a_recent_enough_veeam_br():
     requirement = next(r for r in manifest["requirements"] if r.startswith("veeam-br"))
 
     # Floors we depend on, newest first:
+    #   0.5.1 — veeam_br.exceptions (tell a refused password from a dropped session), the
+    #           VeeamClient timeout, and client.close()
     #   0.5.0 — veeam_br.discovery.detect_rest_api, used to name the port that answered
     #   0.4.0 — veeam_br.discovery.detect_api_version, used to auto-detect the version
     #   0.3.1 — VeeamClient recovers from a refused token refresh instead of leaving a
     #           dead session behind (issue #82)
     #   0.3.0 — first release shipping the v1_3_rev2 SDK
-    minimum = (0, 5, 0)
+    minimum = (0, 5, 1)
 
     match = re.search(r">=\s*(\d+)\.(\d+)\.(\d+)", requirement)
     assert match, f"veeam-br requirement should pin a minimum version, got {requirement}"
@@ -648,80 +613,36 @@ def test_manifest_requires_a_recent_enough_veeam_br():
     )
 
 
-def test_api_versions_discovery_is_sorted(tmp_path, monkeypatch):
-    """Test that discovered API versions are ordered oldest to newest.
-
-    os.listdir order is filesystem-dependent, so the selector order (and the
-    first-option fallback in the config flow) must not rely on it.
-    """
+def test_api_versions_discovery_is_sorted():
+    """API versions are ordered oldest to newest, whatever order the SDK lists them in."""
     const = _load_const()
 
-    # Fake veeam_br package directory, created in an order that is not the sorted order
-    for name in (
-        "v1_3_rev10",
-        "v1_2_rev1",
-        "v1_3_rev2",
-        "v1_10_rev0",
-        "v1_3_rev0",
-        "not_a_version",
-    ):
-        (tmp_path / name).mkdir()
-
-    class FakeSpec:
-        submodule_search_locations = [str(tmp_path)]
-        origin = None
-
-    monkeypatch.setattr(const.importlib.util, "find_spec", lambda name: FakeSpec())
-
-    versions = const._discover_api_versions()
-
-    assert list(versions.keys()) == [
-        "1.2-rev1",
-        "1.3-rev0",
-        "1.3-rev2",
-        "1.3-rev10",
-        "1.10-rev0",
-    ], "API versions should be sorted numerically, and non-version directories ignored"
+    versions = list(const.API_VERSIONS)
+    assert versions == sorted(
+        versions, key=lambda v: tuple(int(x) for x in v.replace("-rev", ".").split("."))
+    )
+    assert versions[-1] == const.DEFAULT_API_VERSION, "the default is the newest"
 
 
-def test_api_versions_discovery_falls_back(monkeypatch):
-    """Test that discovery falls back to the static list when veeam_br is unavailable."""
-    const = _load_const()
+def test_api_versions_come_from_the_sdk():
+    """The SDK's version table is the one list: no directory scan, no copy to keep in step."""
+    from pathlib import Path
 
-    monkeypatch.setattr(const.importlib.util, "find_spec", lambda name: None)
-    assert const._discover_api_versions() == const.FALLBACK_API_VERSIONS
+    const_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "const.py"
+    content = const_path.read_text(encoding="utf-8")
 
-    def boom(name):
-        raise RuntimeError("broken package")
-
-    monkeypatch.setattr(const.importlib.util, "find_spec", boom)
-    assert const._discover_api_versions() == const.FALLBACK_API_VERSIONS
+    assert "from veeam_br.versions import VERSION_TO_PACKAGE" in content
+    assert "FALLBACK_API_VERSIONS" not in content
+    assert "os.listdir" not in content
 
 
-def test_fallback_api_versions_cover_library():
-    """Test that the fallback list covers every version the installed veeam-br ships.
-
-    The fallback may list newer revisions than an older installed library provides, but it
-    must never omit one the library supports — otherwise that version is unselectable when
-    package inspection fails.
-    """
-    try:
-        from veeam_br.versions import VERSION_TO_PACKAGE
-    except ImportError:
-        pytest.skip("veeam-br not installed")
+def test_api_versions_cover_library():
+    """Every version the installed veeam-br ships is offered, with the right package."""
+    from veeam_br.versions import VERSION_TO_PACKAGE
 
     const = _load_const()
 
     library_versions = {
         version: package.rsplit(".", 1)[-1] for version, package in VERSION_TO_PACKAGE.items()
     }
-    missing = {
-        version: module
-        for version, module in library_versions.items()
-        if const.FALLBACK_API_VERSIONS.get(version) != module
-    }
-
-    assert not missing, (
-        f"FALLBACK_API_VERSIONS is missing versions shipped by veeam-br: {missing}. "
-        "It should mirror veeam_br.versions.VERSION_TO_PACKAGE."
-    )
+    assert const.API_VERSIONS == library_versions

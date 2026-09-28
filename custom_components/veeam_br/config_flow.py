@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import logging
 import sys
 from typing import Any
 
-from homeassistant import config_entries
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import AbortFlow
 from homeassistant.helpers import config_validation as cv, selector
+from homeassistant.helpers.httpx_client import get_async_client
+from homeassistant.util.ssl import get_default_context, get_default_no_verify_context
 import voluptuous as vol
 
 from .api_version import async_resolve_api_version
@@ -20,11 +28,13 @@ from .const import (
     AUTO_API_VERSION,
     CONF_API_VERSION,
     CONF_VERIFY_SSL,
+    CONNECT_TIMEOUT,
     DEFAULT_API_MODULE,
     DEFAULT_API_VERSION,
     DEFAULT_PORT,
     DEFAULT_VERIFY_SSL,
     DOMAIN,
+    REQUEST_TIMEOUT,
 )
 from .sdk_patches import patch_models as patch_null_values_in_models
 
@@ -40,6 +50,11 @@ class WrongPortError(ConnectionError):
     def __init__(self, port: int) -> None:
         super().__init__(f"The REST API answered on port {port}, not the configured port")
         self.port = port
+
+
+def _unique_id(data: dict[str, Any]) -> str:
+    """Entry unique ID: host and port, as it has always been."""
+    return f"{data[CONF_HOST]}:{data[CONF_PORT]}"
 
 
 def _get_api_version_selector_config(
@@ -58,7 +73,9 @@ def _get_api_version_selector_config(
     return api_version_options, AUTO_API_VERSION
 
 
-async def async_find_working_port(data: dict[str, Any], configured_port: int) -> int | None:
+async def async_find_working_port(
+    hass: HomeAssistant, data: dict[str, Any], configured_port: int
+) -> int | None:
     """Return another port the REST API answers on, or None.
 
     Veeam B&R 13.1 moved the REST API to 443 and will eventually drop 9419, so "cannot
@@ -68,19 +85,23 @@ async def async_find_working_port(data: dict[str, Any], configured_port: int) ->
     try:
         # Guarded with the probe itself: this runs inside validate_input's failure handler,
         # so an ImportError escaping here would replace the real connection error with
-        # "unknown". The manifest floors veeam-br at 0.5.0, but a hand-installed older copy
-        # should degrade to the generic error, not a misleading one.
+        # "unknown". The manifest floors veeam-br, but a hand-installed older copy should
+        # degrade to the generic error, not a misleading one.
         from veeam_br.discovery import DEFAULT_PORTS, detect_rest_api
 
         others = [port for port in DEFAULT_PORTS if port != configured_port]
         if not others:
             return None
 
+        verify_ssl = data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
         endpoint = await detect_rest_api(
             data[CONF_HOST],
             ports=others,
             versions=list(API_VERSIONS),
-            verify_ssl=data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
+            verify_ssl=verify_ssl,
+            # Home Assistant's shared client: a new one would build an SSL context, and
+            # load the CA bundle, on the event loop
+            client=get_async_client(hass, verify_ssl=verify_ssl),
         )
     except Exception as err:  # noqa: BLE001 - a failed probe just means no advice to give
         _LOGGER.debug("Port probe failed: %s", err)
@@ -124,30 +145,41 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     A stored "auto" is resolved here only to test the connection — it is deliberately not
     written back. Keeping the sentinel means every setup re-resolves it, so a server upgrade or
     a newer veeam-br moves the entry onto the newer revision on its own.
+
+    Raises PermissionError (VeeamAuthenticationError) for refused credentials, WrongPortError
+    when another port answers, and ConnectionError for anything else unreachable.
     """
-    api_version = await async_resolve_api_version(data)
+    verify_ssl = data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL)
 
     try:
-        VeeamClient = await hass.async_add_executor_job(_load_veeam_br, api_version)
-    except ImportError as err:
-        _LOGGER.error("Error importing veeam_br: %s", err)
-        raise ConnectionError("Failed to import veeam_br modules") from err
+        async with asyncio.timeout(CONNECT_TIMEOUT):
+            api_version = await async_resolve_api_version(hass, data)
+            if api_version not in API_VERSIONS:
+                raise ConnectionError(f"API version {api_version} is not supported")
 
-    base_url = f"https://{data[CONF_HOST]}:{data[CONF_PORT]}"
+            try:
+                VeeamClient = await hass.async_add_executor_job(_load_veeam_br, api_version)
+            except ImportError as err:
+                _LOGGER.error("Error importing veeam_br: %s", err)
+                raise ConnectionError("Failed to import veeam_br modules") from err
 
-    try:
-        vc = VeeamClient(
-            host=base_url,
-            username=data[CONF_USERNAME],
-            password=data[CONF_PASSWORD],
-            api_version=api_version,
-            verify_ssl=data.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
-        )
-        await vc.connect()
+            vc = VeeamClient(
+                host=f"https://{data[CONF_HOST]}:{data[CONF_PORT]}",
+                username=data[CONF_USERNAME],
+                password=data[CONF_PASSWORD],
+                api_version=api_version,
+                # Ready-made contexts: building one loads the CA bundle on the event loop
+                verify_ssl=get_default_context() if verify_ssl else get_default_no_verify_context(),
+                timeout=REQUEST_TIMEOUT,
+            )
+            try:
+                await vc.connect()
+            finally:
+                await vc.close()
     except PermissionError:
         raise
     except Exception as err:
-        working_port = await async_find_working_port(data, data[CONF_PORT])
+        working_port = await async_find_working_port(hass, data, data[CONF_PORT])
         if working_port is not None:
             _LOGGER.warning(
                 "Could not reach the Veeam REST API on %s:%s, but it answered on port %s",
@@ -161,17 +193,32 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     return {"title": f"Veeam B&R ({data[CONF_HOST]})"}
 
 
-class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class VeeamBRConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Veeam Backup & Replication."""
 
     VERSION = 1
 
     @staticmethod
     @callback
-    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "VeeamBROptionsFlow":
+    def async_get_options_flow(config_entry: ConfigEntry) -> "VeeamBROptionsFlow":
         return VeeamBROptionsFlow()
 
-    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    def _abort_if_host_configured(self, host: str, ignore_entry_id: str | None = None) -> None:
+        """Refuse a second entry for a server that is already set up on another port.
+
+        13.1 answers on both 443 and 9419, and the unique ID includes the port, so the same
+        server could be added twice — creating every entity twice on shared devices, the
+        second set with a _2 suffix.
+        """
+        for entry in self._async_current_entries(include_ignore=False):
+            if entry.entry_id == ignore_entry_id:
+                continue
+            if str(entry.data.get(CONF_HOST, "")).lower() == host.lower():
+                raise AbortFlow("already_configured")
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle reconfiguration of the integration."""
         errors: dict[str, str] = {}
         wrong_port: int | None = None
@@ -187,6 +234,14 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
                 CONF_VERIFY_SSL: user_input.get(CONF_VERIFY_SSL, DEFAULT_VERIFY_SSL),
             }
+
+            # The unique ID follows host and port, so moving an entry to 443 or to a new
+            # address keeps it in step — and must not collide with another entry
+            new_unique_id = _unique_id(data)
+            if new_unique_id != reconf_entry.unique_id:
+                await self.async_set_unique_id(new_unique_id)
+                self._abort_if_unique_id_configured()
+            self._abort_if_host_configured(data[CONF_HOST], reconf_entry.entry_id)
 
             try:
                 await validate_input(self.hass, data)
@@ -204,6 +259,7 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             else:
                 return self.async_update_reload_and_abort(
                     reconf_entry,
+                    unique_id=new_unique_id,
                     data=data,
                     reason="reconfigure_successful",
                 )
@@ -233,13 +289,13 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
         """Handle reauth upon API authentication error."""
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Confirm reauth dialog."""
         errors: dict[str, str] = {}
         wrong_port: int | None = None
@@ -290,13 +346,14 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         wrong_port: int | None = None
 
         if user_input is not None:
-            await self.async_set_unique_id(f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}")
+            await self.async_set_unique_id(_unique_id(user_input))
             self._abort_if_unique_id_configured()
+            self._abort_if_host_configured(user_input[CONF_HOST])
 
             try:
                 info = await validate_input(self.hass, user_input)
@@ -354,10 +411,15 @@ class VeeamBRConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
 
 
-class VeeamBROptionsFlow(config_entries.OptionsFlow):
-    """Handle options flow for Veeam Backup & Replication integration."""
+class VeeamBROptionsFlow(OptionsFlowWithReload):
+    """Handle options flow for Veeam Backup & Replication integration.
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+    OptionsFlowWithReload reloads the entry once the options are saved, which replaces the
+    update listener that also fired — and reloaded a second time — after every reauth and
+    reconfigure.
+    """
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         wrong_port: int | None = None
 

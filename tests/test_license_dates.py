@@ -357,3 +357,15 @@ def test_other_errors_are_reported_not_hidden(cluster_reason, status):
 
     assert unclustered is False
     assert str(status) in detail
+
+
+def test_a_top_level_date_the_model_no_longer_declares_is_still_read(helpers):
+    """1.3 dropped the top-level fields from the model, so if a server still sends one it
+    arrives in additional_properties as a raw string."""
+    helpers["dt_util"] = type(
+        "dt_util", (), {"parse_datetime": staticmethod(datetime.fromisoformat)}
+    )
+    helpers["timezone"] = timezone
+    license_data = License(additional_properties={"supportExpirationDate": "2027-01-01T00:00:00"})
+
+    assert helpers["_license_datetime"](license_data, "support_expiration_date") == SUPPORT_EXPIRES

@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Kan geen verbinding maken met de Veeam-server",
       "invalid_auth": "Ongeldige authenticatiegegevens",
-      "unknown": "Er is een onverwachte fout opgetreden"
+      "unknown": "Er is een onverwachte fout opgetreden",
+      "wrong_port": "Verbinden op die poort is mislukt, maar de Veeam REST API antwoordde op poort {wrong_port}. Veeam B&R 13.1 en nieuwer bieden de API aan op 443; oudere versies gebruiken 9419."
     },
     "abort": {
       "already_configured": "Deze Veeam-server is al geconfigureerd",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Kan geen verbinding maken met de Veeam-server",
       "invalid_auth": "Ongeldige authenticatiegegevens",
-      "unknown": "Er is een onverwachte fout opgetreden"
+      "unknown": "Er is een onverwachte fout opgetreden",
+      "wrong_port": "Verbinden op die poort is mislukt, maar de Veeam REST API antwoordde op poort {wrong_port}. Veeam B&R 13.1 en nieuwer bieden de API aan op 443; oudere versies gebruiken 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Ongeldige reactie ontvangen van Veeam-server"
+    },
+    "action_failed": {
+      "message": "{action} van {target} is mislukt: {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam heeft {action} van {target} geweigerd: {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Verlopen",
         "invalid": "Ongeldig"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Niet-ondersteunde Veeam-licentie op {host}",
+      "description": "De Veeam Backup & Replication-server **{host}** meldt de licentie **{license}**.\n\nVeeam Community Edition en servers zonder geïnstalleerde licentie worden niet ondersteund door deze integratie: de rechten verschillen en sommige REST API-eindpunten antwoorden anders of helemaal niet, waardoor entiteiten kunnen ontbreken of onbetrouwbaar zijn.\n\nDe integratie blijft werken — er wordt niets geblokkeerd. Vermeld bij problemen deze licentie-editie in je bugmelding. Installeer een ondersteunde licentie, of verwijder de integratie, om deze waarschuwing te laten verdwijnen."
     }
   }
 }

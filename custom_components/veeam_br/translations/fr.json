@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Échec de la connexion au serveur Veeam",
       "invalid_auth": "Identifiants d'authentification invalides",
-      "unknown": "Une erreur inattendue s'est produite"
+      "unknown": "Une erreur inattendue s'est produite",
+      "wrong_port": "Connexion impossible sur ce port, mais l'API REST Veeam a répondu sur le port {wrong_port}. Veeam B&R 13.1 et versions ultérieures servent l'API sur le port 443 ; les versions plus anciennes utilisent le 9419."
     },
     "abort": {
       "already_configured": "Ce serveur Veeam est déjà configuré",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Échec de la connexion au serveur Veeam",
       "invalid_auth": "Identifiants d'authentification invalides",
-      "unknown": "Une erreur inattendue s'est produite"
+      "unknown": "Une erreur inattendue s'est produite",
+      "wrong_port": "Connexion impossible sur ce port, mais l'API REST Veeam a répondu sur le port {wrong_port}. Veeam B&R 13.1 et versions ultérieures servent l'API sur le port 443 ; les versions plus anciennes utilisent le 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Réponse invalide reçue du serveur Veeam"
+    },
+    "action_failed": {
+      "message": "Impossible de {action} {target} : {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam a refusé de {action} {target} : {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Expirée",
         "invalid": "Invalide"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Licence Veeam non prise en charge sur {host}",
+      "description": "Le serveur Veeam Backup & Replication **{host}** signale la licence **{license}**.\n\nVeeam Community Edition et les serveurs sans licence installée ne sont pas pris en charge par cette intégration : les droits diffèrent et certains points de terminaison de l'API REST répondent différemment ou pas du tout, si bien que des entités peuvent manquer ou être peu fiables.\n\nL'intégration continue de fonctionner — rien n'est bloqué. En cas de problème, indiquez cette édition de licence dans votre rapport de bug. Installez une licence prise en charge, ou supprimez l'intégration, pour faire disparaître cet avertissement."
     }
   }
 }

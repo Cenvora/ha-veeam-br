@@ -253,15 +253,17 @@ def test_additional_properties_cannot_overwrite_parsed_fields(helpers):
 def test_cluster_fetch_is_version_guarded():
     """Older API versions do not have the endpoint; the call must be skipped, not failed."""
     content = INIT_PATH.read_text(encoding="utf-8")
+    const = (INIT_PATH.parent / "const.py").read_text(encoding="utf-8")
 
-    assert 'HA_CLUSTER_FEATURE = "api.high_availability_ha_cluster"' in content
+    assert 'FEATURE_HA_CLUSTER = "api.high_availability_ha_cluster"' in const
     assert (
-        "check_api_feature_availability(api_version, HA_CLUSTER_FEATURE)" in content
+        "check_api_feature_availability(api_version, FEATURE_HA_CLUSTER)" in content
     ), "HA cluster support should be probed through the shared feature check"
 
-    fetch = content.index("get_high_availability_cluster")
-    guard = content.rindex("if ha_cluster_supported:", 0, fetch)
-    assert guard < fetch, "the fetch should sit behind the support flag"
+    poll = content[content.index("async def poll()") :]
+    call = poll.index('run("ha_cluster", fetch_ha_cluster')
+    guard = poll.rindex("if ha_cluster_supported:", 0, call)
+    assert guard < call, "the fetch should sit behind the support flag"
 
 
 def test_unclustered_server_is_not_an_error():
@@ -280,13 +282,11 @@ def test_unclustered_server_is_not_an_error():
         "_LOGGER.debug"
     ), "an unclustered server should be a debug message, not a warning"
 
-    # An auth or server error arrives as the same Error model and must not be buried
-    failure = "Could not read the HA cluster"
-    assert failure in content
-    line_start = content.rindex("_LOGGER.", 0, content.index(failure))
-    assert content[line_start:].startswith(
-        "_LOGGER.warning"
-    ), "401/403/500 come back as an Error too, and should be reported"
+    # An auth or server error arrives as the same Error model and must not be buried: it
+    # fails the endpoint, which is reported as a warning when it starts failing
+    fetch = content[content.index("async def fetch_ha_cluster") :]
+    fetch = fetch[: fetch.index("async def poll")]
+    assert "raise UnexpectedResponseError" in fetch, "401/403/500 should fail the endpoint"
 
 
 def test_failover_button_is_disabled_by_default():

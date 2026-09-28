@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Falha ao conectar ao servidor Veeam",
       "invalid_auth": "Credenciais de autenticação inválidas",
-      "unknown": "Ocorreu um erro inesperado"
+      "unknown": "Ocorreu um erro inesperado",
+      "wrong_port": "Não foi possível ligar nessa porta, mas a API REST do Veeam respondeu na porta {wrong_port}. O Veeam B&R 13.1 e posteriores disponibilizam a API na porta 443; as versões mais antigas usam a 9419."
     },
     "abort": {
       "already_configured": "Este servidor Veeam já está configurado",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Falha ao conectar ao servidor Veeam",
       "invalid_auth": "Credenciais de autenticação inválidas",
-      "unknown": "Ocorreu um erro inesperado"
+      "unknown": "Ocorreu um erro inesperado",
+      "wrong_port": "Não foi possível ligar nessa porta, mas a API REST do Veeam respondeu na porta {wrong_port}. O Veeam B&R 13.1 e posteriores disponibilizam a API na porta 443; as versões mais antigas usam a 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Resposta inválida recebida do servidor Veeam"
+    },
+    "action_failed": {
+      "message": "Não foi possível {action} {target}: {error}"
+    },
+    "action_rejected": {
+      "message": "O Veeam recusou {action} {target}: {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Expirada",
         "invalid": "Inválida"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Licença Veeam não suportada em {host}",
+      "description": "O servidor Veeam Backup & Replication **{host}** indica a licença **{license}**.\n\nO Veeam Community Edition e os servidores sem licença instalada não são suportados por esta integração: as permissões são diferentes e alguns endpoints da API REST respondem de outra forma ou não respondem, pelo que podem faltar entidades ou estas podem não ser fiáveis.\n\nA integração continua a funcionar — nada é bloqueado. Se tiver problemas, inclua esta edição da licença no seu relatório de erro. Instale uma licença suportada, ou remova a integração, para eliminar este aviso."
     }
   }
 }
