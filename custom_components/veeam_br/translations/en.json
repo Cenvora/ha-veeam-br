@@ -257,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Received invalid response from Veeam server"
+    },
+    "action_failed": {
+      "message": "Could not {action} {target}: {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam refused to {action} {target}: {error}"
     }
   },
   "selector": {

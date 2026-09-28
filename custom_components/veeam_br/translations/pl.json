@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Nie udało się połączyć z serwerem Veeam",
       "invalid_auth": "Nieprawidłowe dane uwierzytelniające",
-      "unknown": "Wystąpił nieoczekiwany błąd"
+      "unknown": "Wystąpił nieoczekiwany błąd",
+      "wrong_port": "Nie udało się połączyć na tym porcie, ale Veeam REST API odpowiedziało na porcie {wrong_port}. Veeam B&R 13.1 i nowsze udostępniają API na porcie 443; starsze wersje używają 9419."
     },
     "abort": {
       "already_configured": "Ten serwer Veeam jest już skonfigurowany",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Nie udało się połączyć z serwerem Veeam",
       "invalid_auth": "Nieprawidłowe dane uwierzytelniające",
-      "unknown": "Wystąpił nieoczekiwany błąd"
+      "unknown": "Wystąpił nieoczekiwany błąd",
+      "wrong_port": "Nie udało się połączyć na tym porcie, ale Veeam REST API odpowiedziało na porcie {wrong_port}. Veeam B&R 13.1 i nowsze udostępniają API na porcie 443; starsze wersje używają 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Otrzymano nieprawidłową odpowiedź z serwera Veeam"
+    },
+    "action_failed": {
+      "message": "Nie udało się wykonać operacji {action} dla {target}: {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam odrzucił operację {action} dla {target}: {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Wygasła",
         "invalid": "Nieważna"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Nieobsługiwana licencja Veeam na {host}",
+      "description": "Serwer Veeam Backup & Replication **{host}** zgłasza licencję **{license}**.\n\nVeeam Community Edition oraz serwery bez zainstalowanej licencji nie są obsługiwane przez tę integrację: uprawnienia są inne, a niektóre punkty końcowe REST API odpowiadają inaczej lub wcale, więc encji może brakować lub mogą być niewiarygodne.\n\nIntegracja nadal działa — nic nie jest blokowane. Jeśli napotkasz problemy, podaj tę edycję licencji w zgłoszeniu błędu. Zainstaluj obsługiwaną licencję lub usuń integrację, aby usunąć to ostrzeżenie."
     }
   }
 }

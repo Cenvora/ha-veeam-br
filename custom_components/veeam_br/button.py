@@ -2,33 +2,117 @@
 
 from __future__ import annotations
 
-import asyncio
 import importlib
 import logging
+from typing import Any
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     API_VERSIONS,
-    CONF_API_VERSION,
     DEFAULT_API_MODULE,
-    DEFAULT_API_VERSION,
     DOMAIN,
+    FEATURE_HA_CLUSTER,
+    FEATURE_HA_FAILOVER,
+    FEATURE_HA_SWITCHOVER,
+    FEATURE_JOB_RETRY,
+    FEATURE_JOB_START,
+    FEATURE_JOB_STOP,
+    FEATURE_JOBS,
+    FEATURE_PROXY_DISABLE,
+    FEATURE_PROXY_ENABLE,
+    FEATURE_REPOSITORY_RESCAN,
+    FEATURE_SOBR_EXTENT_MODES,
     check_api_feature_availability,
     configured_api_version,
 )
+from .display import describe_error
+from .entity import (
+    ha_cluster_device_info,
+    job_device_info,
+    proxy_device_info,
+    repository_device_info,
+    sobr_device_info,
+)
+from .pruning import forget_missing, reported_extent_ids, reported_ids
 
 _LOGGER = logging.getLogger(__name__)
 
 # Limit parallel updates to avoid overwhelming the Veeam API
 PARALLEL_UPDATES = 1
+
+# Operation modules each button calls, with the feature that gates it. veeam-br imports them
+# on first use, which would block the event loop, so they are imported up front in an
+# executor — every one a button can call, or its first press trips the blocking-call check.
+BUTTON_ENDPOINTS = (
+    ("jobs.start_job", FEATURE_JOBS),
+    ("jobs.stop_job", FEATURE_JOBS),
+    ("jobs.retry_job", FEATURE_JOBS),
+    ("jobs.enable_job", FEATURE_JOBS),
+    ("jobs.disable_job", FEATURE_JOBS),
+    ("repositories.rescan_repositories", FEATURE_REPOSITORY_RESCAN),
+    ("repositories.enable_scale_out_extent_sealed_mode", FEATURE_SOBR_EXTENT_MODES),
+    ("repositories.disable_scale_out_extent_sealed_mode", FEATURE_SOBR_EXTENT_MODES),
+    ("repositories.enable_scale_out_extent_maintenance_mode", FEATURE_SOBR_EXTENT_MODES),
+    ("repositories.disable_scale_out_extent_maintenance_mode", FEATURE_SOBR_EXTENT_MODES),
+    ("proxies.enable_proxy", FEATURE_PROXY_ENABLE),
+    ("proxies.disable_proxy", FEATURE_PROXY_DISABLE),
+    ("high_availability_ha_cluster.switchover_high_availability_cluster", FEATURE_HA_SWITCHOVER),
+    ("high_availability_ha_cluster.failover_high_availability_cluster", FEATURE_HA_FAILOVER),
+)
+
+# Request bodies the buttons build, imported alongside
+BUTTON_SPECS = (
+    FEATURE_JOB_START,
+    FEATURE_JOB_STOP,
+    FEATURE_JOB_RETRY,
+    FEATURE_REPOSITORY_RESCAN,
+    FEATURE_SOBR_EXTENT_MODES,
+    "models.high_availability_switchover_spec",
+)
+
+
+def _pre_import(api_version: str, api_module: str) -> None:
+    """Import every operation and spec a button can use. Blocking: run in an executor."""
+    for endpoint, feature in BUTTON_ENDPOINTS:
+        if not check_api_feature_availability(api_version, feature):
+            continue
+        try:
+            importlib.import_module(f"veeam_br.{api_module}.api.{endpoint}")
+        except ImportError as err:
+            _LOGGER.debug("Could not pre-import %s: %s", endpoint, err)
+
+    for spec in BUTTON_SPECS:
+        if not check_api_feature_availability(api_version, spec):
+            continue
+        try:
+            importlib.import_module(f"veeam_br.{api_module}.{spec}")
+        except ImportError as err:
+            _LOGGER.debug("Could not pre-import %s: %s", spec, err)
+
+
+def _rejection(result: Any) -> str | None:
+    """Why the server refused an operation, or None if it did not.
+
+    The generated operations return an Error model for a documented failure rather than
+    raising, so an unchecked result reported every refusal — a job already running, a
+    missing permission — as success.
+    """
+    if not hasattr(result, "error_code"):
+        return None
+    message = getattr(result, "message", None)
+    code = getattr(result, "error_code", None)
+    code = getattr(code, "value", code)
+    extras = getattr(result, "additional_properties", None) or {}
+    status = extras.get("status") if isinstance(extras, dict) else None
+    parts = [str(part) for part in (f"HTTP {status}" if status else None, code, message) if part]
+    return ": ".join(parts) or type(result).__name__
 
 
 async def async_setup_entry(
@@ -40,31 +124,9 @@ async def async_setup_entry(
     coordinator = entry.runtime_data["coordinator"]
     veeam_client = entry.runtime_data["veeam_client"]
 
-    # Pre-import API endpoint modules to avoid blocking calls in event loop
-    # Get the configured API version for proper module path
     api_version = configured_api_version(entry)
     api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
-
-    # Pre-import button API endpoints
-    button_endpoints = [
-        "jobs.start_job",
-        "jobs.stop_job",
-        "jobs.retry_job",
-        "jobs.enable_job",
-        "jobs.disable_job",
-        "repositories.rescan_repositories",
-        "repositories.enable_scale_out_extent_sealed_mode",
-        "repositories.disable_scale_out_extent_sealed_mode",
-        "repositories.enable_scale_out_extent_maintenance_mode",
-        "repositories.disable_scale_out_extent_maintenance_mode",
-    ]
-    for endpoint in button_endpoints:
-        try:
-            await asyncio.to_thread(
-                importlib.import_module, f"veeam_br.{api_module}.api.{endpoint}"
-            )
-        except ImportError as err:
-            _LOGGER.debug("Could not pre-import %s: %s", endpoint, err)
+    await hass.async_add_executor_job(_pre_import, api_version, api_module)
 
     added_repository_ids: set[str] = set()
     added_sobr_extent_ids: set[tuple[str, str]] = set()  # (sobr_id, extent_id) tuples
@@ -93,16 +155,16 @@ async def async_setup_entry(
             job_buttons = []
 
             # Check if each button type's API feature is available before creating
-            if check_api_feature_availability(api_version, "models.job_start_spec"):
+            if check_api_feature_availability(api_version, FEATURE_JOB_START):
                 job_buttons.append(VeeamJobStartButton(coordinator, entry, job, veeam_client))
 
-            if check_api_feature_availability(api_version, "models.job_stop_spec"):
+            if check_api_feature_availability(api_version, FEATURE_JOB_STOP):
                 job_buttons.append(VeeamJobStopButton(coordinator, entry, job, veeam_client))
 
-            if check_api_feature_availability(api_version, "models.job_retry_spec"):
+            if check_api_feature_availability(api_version, FEATURE_JOB_RETRY):
                 job_buttons.append(VeeamJobRetryButton(coordinator, entry, job, veeam_client))
 
-            if check_api_feature_availability(api_version, "api.jobs"):
+            if check_api_feature_availability(api_version, FEATURE_JOBS):
                 job_buttons.append(VeeamJobEnableButton(coordinator, entry, job, veeam_client))
                 job_buttons.append(VeeamJobDisableButton(coordinator, entry, job, veeam_client))
 
@@ -116,7 +178,7 @@ async def async_setup_entry(
             )
 
         # Create rescan button for each repository
-        if check_api_feature_availability(api_version, "models.repositories_rescan_spec"):
+        if check_api_feature_availability(api_version, FEATURE_REPOSITORY_RESCAN):
             for repository in coordinator.data.get("repositories", []):
                 repo_id = repository.get("id")
                 if not repo_id or repo_id in added_repository_ids:
@@ -133,7 +195,7 @@ async def async_setup_entry(
                 )
 
         # Create buttons for each SOBR extent
-        if check_api_feature_availability(api_version, "models.scale_out_extent_maintenance_spec"):
+        if check_api_feature_availability(api_version, FEATURE_SOBR_EXTENT_MODES):
             for sobr in coordinator.data.get("sobrs", []):
                 sobr_id = sobr.get("id")
                 sobr_name = sobr.get("name", "Unknown SOBR")
@@ -178,7 +240,7 @@ async def async_setup_entry(
         # ---- PROXY BUTTONS - a proxy can be taken out of service without deleting it ----
         # enable_proxy/disable_proxy arrived in 1.3-rev0; api.proxies alone is not enough,
         # since older versions expose the namespace without those two operations (#104)
-        if check_api_feature_availability(api_version, "api.proxies.enable_proxy"):
+        if check_api_feature_availability(api_version, FEATURE_PROXY_ENABLE):
             for proxy in coordinator.data.get("proxies", []):
                 proxy_id = proxy.get("id")
                 if not proxy_id or proxy_id in added_proxy_ids:
@@ -197,7 +259,7 @@ async def async_setup_entry(
         if (
             not ha_cluster_added
             and coordinator.data.get("ha_cluster")
-            and check_api_feature_availability(api_version, "api.high_availability_ha_cluster")
+            and check_api_feature_availability(api_version, FEATURE_HA_CLUSTER)
         ):
             new_entities.extend(
                 [
@@ -212,117 +274,105 @@ async def async_setup_entry(
             _LOGGER.debug("Adding %d Veeam buttons", len(new_entities))
             async_add_entities(new_entities)
 
-        # Remove stale button entities
-        _remove_stale_button_entities(
-            hass, entry, added_repository_ids, added_sobr_extent_ids, added_job_ids
-        )
-
-    def _remove_stale_button_entities(
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        current_repo_ids: set[str],
-        current_sobr_extent_ids: set[tuple[str, str]],
-        current_job_ids: set[str],
-    ) -> None:
-        """Remove button entities for repos/sobrs/jobs that no longer exist.
-
-        Scans the entity registry directly so that button entities persisted
-        from previous HA sessions are also cleaned up, not only those added in
-        the current session.
-        """
-        if not coordinator.data:
-            return
-
-        entity_reg = er.async_get(hass)
-        entry_id = entry.entry_id
-
-        # Get current IDs from coordinator data
-        current_repos_in_data = {
-            repo.get("id") for repo in coordinator.data.get("repositories", []) if repo.get("id")
-        }
-        current_jobs_in_data = {
-            job.get("id") for job in coordinator.data.get("jobs", []) if job.get("id")
-        }
-
-        # Track current SOBR extents in data
-        current_sobr_extents_in_data: set[tuple[str, str]] = set()
-        for sobr in coordinator.data.get("sobrs", []):
-            sobr_id = sobr.get("id")
-            if sobr_id:
-                for extent in sobr.get("extents", []):
-                    extent_id = extent.get("id")
-                    if extent_id:
-                        current_sobr_extents_in_data.add((sobr_id, extent_id))
-
-        # Build unique_id prefixes for active entities
-        active_job_prefixes = {f"{entry_id}_job_{job_id}_" for job_id in current_jobs_in_data}
-        active_repo_prefixes = {
-            f"{entry_id}_repository_{repo_id}_" for repo_id in current_repos_in_data
-        }
-        active_sobr_extent_prefixes = {
-            f"{entry_id}_sobr_{sobr_id}_extent_{extent_id}_"
-            for sobr_id, extent_id in current_sobr_extents_in_data
-        }
-
-        # Scan all registered button entities for this config entry and remove stale ones.
-        # Using list() to avoid mutating the iterable while iterating.
-        for entity in list(er.async_entries_for_config_entry(entity_reg, entry_id)):
-            if not entity.unique_id:
-                continue
-            unique_id = entity.unique_id
-
-            if unique_id.startswith(f"{entry_id}_job_"):
-                if not any(unique_id.startswith(p) for p in active_job_prefixes):
-                    _LOGGER.info("Removing stale job button: %s", entity.entity_id)
-                    entity_reg.async_remove(entity.entity_id)
-
-            elif unique_id.startswith(f"{entry_id}_repository_"):
-                if not any(unique_id.startswith(p) for p in active_repo_prefixes):
-                    _LOGGER.info("Removing stale repository button: %s", entity.entity_id)
-                    entity_reg.async_remove(entity.entity_id)
-
-            elif unique_id.startswith(f"{entry_id}_sobr_") and "_extent_" in unique_id:
-                if not any(unique_id.startswith(p) for p in active_sobr_extent_prefixes):
-                    _LOGGER.info("Removing stale SOBR extent button: %s", entity.entity_id)
-                    entity_reg.async_remove(entity.entity_id)
-
-        # Update tracking sets to reflect only IDs still present in the API
-        current_job_ids.intersection_update(current_jobs_in_data)
-        current_repo_ids.intersection_update(current_repos_in_data)
-        current_sobr_extent_ids.intersection_update(current_sobr_extents_in_data)
+        # Removal is the shared sweep's job (pruning.py); forgetting what it removed lets
+        # an object that comes back get its buttons again
+        forget_missing(added_job_ids, reported_ids(coordinator.data, "jobs"))
+        forget_missing(added_repository_ids, reported_ids(coordinator.data, "repositories"))
+        forget_missing(added_sobr_extent_ids, reported_extent_ids(coordinator.data))
+        forget_missing(added_proxy_ids, reported_ids(coordinator.data, "proxies"))
 
     # First attempt (after first refresh already ran)
     _sync_entities()
 
     # Future updates
-    coordinator.async_add_listener(_sync_entities)
+    entry.async_on_unload(coordinator.async_add_listener(_sync_entities))
 
 
-class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
-    """Button to trigger repository rescan."""
+class VeeamButtonBase(CoordinatorEntity, ButtonEntity):
+    """Shared press handling: every button runs one operation and reports its outcome."""
 
     _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry, veeam_client):
+        super().__init__(coordinator)
+        self._config_entry = config_entry
+        self._veeam_client = veeam_client
+
+    def _api_module(self) -> str:
+        """Resolve the SDK package for the configured API version."""
+        return API_VERSIONS.get(configured_api_version(self._config_entry), DEFAULT_API_MODULE)
+
+    def _spec_class(self, module_name: str, class_name: str, action: str, target: str):
+        """A request-body model, already imported during setup."""
+        try:
+            module = importlib.import_module(f"veeam_br.{self._api_module()}.models.{module_name}")
+            return getattr(module, class_name)
+        except (ImportError, AttributeError) as err:
+            _LOGGER.error("Cannot %s %s: %s is unavailable (%s)", action, target, class_name, err)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="action_failed",
+                translation_placeholders={
+                    "action": action,
+                    "target": target,
+                    "error": f"{class_name} is not available in this API version",
+                },
+            ) from err
+
+    async def _async_run(
+        self, namespace: str, operation: str, action: str, target: str, **kwargs: Any
+    ) -> Any:
+        """Call one operation, raise if it failed or was refused, then refresh.
+
+        Raising HomeAssistantError is what makes the UI say the press failed; before, an
+        error was logged while the press still looked successful.
+        """
+        try:
+            api = self._veeam_client.api(namespace)
+            result = await self._veeam_client.call(getattr(api, operation), **kwargs)
+        except Exception as err:
+            _LOGGER.error("Failed to %s %s: %s", action, target, describe_error(err))
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="action_failed",
+                translation_placeholders={
+                    "action": action,
+                    "target": target,
+                    "error": describe_error(err),
+                },
+            ) from err
+
+        reason = _rejection(result)
+        if reason is not None:
+            _LOGGER.error("Veeam refused to %s %s: %s", action, target, reason)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="action_rejected",
+                translation_placeholders={"action": action, "target": target, "error": reason},
+            )
+
+        _LOGGER.info("Requested: %s %s", action, target)
+        await self.coordinator.async_request_refresh()
+        return result
+
+
+class VeeamRepositoryRescanButton(VeeamButtonBase):
+    """Button to trigger repository rescan."""
+
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator, config_entry, repository_data, veeam_client):
         """Initialize the rescan button."""
-        super().__init__(coordinator)
-        self._config_entry = config_entry
+        super().__init__(coordinator, config_entry, veeam_client)
         self._repo_id = repository_data.get("id")
         self._repo_name = repository_data.get("name", "Unknown Repository")
-        self._veeam_client = veeam_client
         self._attr_unique_id = f"{config_entry.entry_id}_repository_{self._repo_id}_rescan"
         self._attr_name = "Rescan"
 
     @property
     def device_info(self):
         """Return device info for this repository."""
-        return {
-            "identifiers": {(DOMAIN, f"repository_{self._repo_id}")},
-            "name": f"{self._repo_name}",
-            "manufacturer": "Veeam",
-            "model": "Backup Repository",
-        }
+        return repository_device_info(self._repo_id, self._repo_name)
 
     @property
     def icon(self) -> str:
@@ -330,60 +380,18 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
         return "mdi:magnify-scan"
 
     async def async_press(self) -> None:
-        """Handle the button press to trigger a repository rescan.
-
-        This method calls the Veeam API to rescan the repository using the
-        veeam-br library's rescan_repositories endpoint with the repository ID.
-        After a successful rescan request, it triggers a coordinator refresh
-        to update all repository sensors.
-
-        Side effects:
-            - Calls the Veeam API repositories rescan endpoint via veeam-br library
-            - Triggers coordinator.async_request_refresh() on success
-        """
-        try:
-            # Get the API version
-            api_version = configured_api_version(self._config_entry)
-            api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
-
-            # VeeamClient handles token refresh automatically - no manual check needed
-
-            # Trigger the rescan using veeam-br library VeeamClient
-            try:
-                # Import the body model for the rescan request
-                models_module = await asyncio.to_thread(
-                    importlib.import_module,
-                    f"veeam_br.{api_module}.models.repositories_rescan_spec",
-                )
-                RepositoriesRescanSpec = models_module.RepositoriesRescanSpec
-                body = RepositoriesRescanSpec(repository_ids=[self._repo_id])
-            except (ImportError, AttributeError) as e:
-                _LOGGER.error(
-                    "Failed to import RepositoriesRescanSpec: %s. Cannot rescan repository.", e
-                )
-                return
-
-            # Call the rescan endpoint using VeeamClient
-            try:
-                repositories_api = await asyncio.to_thread(self._veeam_client.api, "repositories")
-                await self._veeam_client.call(
-                    repositories_api.rescan_repositories,
-                    body=body,
-                )
-                _LOGGER.info("Successfully triggered rescan for repository: %s", self._repo_name)
-                # Request coordinator update to refresh repository state
-                await self.coordinator.async_request_refresh()
-            except Exception as call_err:
-                _LOGGER.error(
-                    "Failed to rescan repository %s: %s",
-                    self._repo_name,
-                    call_err,
-                )
-                raise
-
-        except Exception as err:
-            _LOGGER.error("Error rescanning repository %s: %s", self._repo_name, err)
-            raise
+        """Ask the server to rescan this repository, then refresh."""
+        target = f"repository {self._repo_name}"
+        spec = self._spec_class(
+            "repositories_rescan_spec", "RepositoriesRescanSpec", "rescan", target
+        )
+        await self._async_run(
+            "repositories",
+            "rescan_repositories",
+            "rescan",
+            target,
+            body=spec(repository_ids=[self._repo_id]),
+        )
 
 
 # ===========================
@@ -391,35 +399,52 @@ class VeeamRepositoryRescanButton(CoordinatorEntity, ButtonEntity):
 # ===========================
 
 
-class VeeamSOBRExtentButtonBase(CoordinatorEntity, ButtonEntity):
+class VeeamSOBRExtentButtonBase(VeeamButtonBase):
     """Base class for SOBR extent buttons."""
 
-    _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.CONFIG
+
+    # Set by each subclass: the operation and how to describe it
+    _operation: str = ""
+    _action: str = ""
 
     def __init__(self, coordinator, config_entry, sobr_data, extent_data, veeam_client):
         """Initialize the SOBR extent button."""
-        super().__init__(coordinator)
-        self._config_entry = config_entry
+        super().__init__(coordinator, config_entry, veeam_client)
         self._sobr_id = sobr_data.get("id")
         self._sobr_name = sobr_data.get("name", "Unknown SOBR")
         self._extent_id = extent_data.get("id")
         self._extent_name = extent_data.get("name", "Unknown Extent")
-        self._veeam_client = veeam_client
 
     @property
     def device_info(self):
         """Return device info for this SOBR."""
-        return {
-            "identifiers": {(DOMAIN, f"sobr_{self._sobr_id}")},
-            "name": f"{self._sobr_name}",
-            "manufacturer": "Veeam",
-            "model": "Scale-Out Backup Repository",
-        }
+        return sobr_device_info(self._sobr_id, self._sobr_name)
+
+    async def async_press(self) -> None:
+        """Run this button's extent operation."""
+        target = f"extent {self._extent_name} of SOBR {self._sobr_name}"
+        spec = self._spec_class(
+            "scale_out_extent_maintenance_spec",
+            "ScaleOutExtentMaintenanceSpec",
+            self._action,
+            target,
+        )
+        await self._async_run(
+            "repositories",
+            self._operation,
+            self._action,
+            target,
+            id=self._sobr_id,
+            body=spec(repository_ids=[self._extent_id]),
+        )
 
 
 class VeeamSOBRExtentEnableSealedModeButton(VeeamSOBRExtentButtonBase):
     """Button to enable sealed mode for a SOBR extent."""
+
+    _operation = "enable_scale_out_extent_sealed_mode"
+    _action = "enable sealed mode on"
 
     def __init__(self, coordinator, config_entry, sobr_data, extent_data, veeam_client):
         """Initialize the button."""
@@ -435,63 +460,12 @@ class VeeamSOBRExtentEnableSealedModeButton(VeeamSOBRExtentButtonBase):
         """Return the icon for the button."""
         return "mdi:lock-check"
 
-    async def async_press(self) -> None:
-        """Handle the button press to enable sealed mode for the extent."""
-        try:
-            # Get the API version
-            api_version = configured_api_version(self._config_entry)
-            api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
-
-            # Import the body model for the request
-            try:
-                models_module = await asyncio.to_thread(
-                    importlib.import_module,
-                    f"veeam_br.{api_module}.models.scale_out_extent_maintenance_spec",
-                )
-                ScaleOutExtentMaintenanceSpec = models_module.ScaleOutExtentMaintenanceSpec
-                body = ScaleOutExtentMaintenanceSpec(repository_ids=[self._extent_id])
-            except (ImportError, AttributeError) as e:
-                _LOGGER.error(
-                    "Failed to import ScaleOutExtentMaintenanceSpec: %s. Cannot enable sealed mode.",
-                    e,
-                )
-                return
-
-            # Call the enable sealed mode endpoint
-            try:
-                repositories_api = await asyncio.to_thread(self._veeam_client.api, "repositories")
-                await self._veeam_client.call(
-                    repositories_api.enable_scale_out_extent_sealed_mode,
-                    id=self._sobr_id,
-                    body=body,
-                )
-                _LOGGER.info(
-                    "Successfully enabled sealed mode for extent %s in SOBR %s",
-                    self._extent_name,
-                    self._sobr_name,
-                )
-                await self.coordinator.async_request_refresh()
-            except Exception as call_err:
-                _LOGGER.error(
-                    "Failed to enable sealed mode for extent %s in SOBR %s: %s",
-                    self._extent_name,
-                    self._sobr_name,
-                    call_err,
-                )
-                raise
-
-        except Exception as err:
-            _LOGGER.error(
-                "Error enabling sealed mode for extent %s in SOBR %s: %s",
-                self._extent_name,
-                self._sobr_name,
-                err,
-            )
-            raise
-
 
 class VeeamSOBRExtentDisableSealedModeButton(VeeamSOBRExtentButtonBase):
     """Button to disable sealed mode for a SOBR extent."""
+
+    _operation = "disable_scale_out_extent_sealed_mode"
+    _action = "disable sealed mode on"
 
     def __init__(self, coordinator, config_entry, sobr_data, extent_data, veeam_client):
         """Initialize the button."""
@@ -507,63 +481,12 @@ class VeeamSOBRExtentDisableSealedModeButton(VeeamSOBRExtentButtonBase):
         """Return the icon for the button."""
         return "mdi:lock-open"
 
-    async def async_press(self) -> None:
-        """Handle the button press to disable sealed mode for the extent."""
-        try:
-            # Get the API version
-            api_version = configured_api_version(self._config_entry)
-            api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
-
-            # Import the body model for the request
-            try:
-                models_module = await asyncio.to_thread(
-                    importlib.import_module,
-                    f"veeam_br.{api_module}.models.scale_out_extent_maintenance_spec",
-                )
-                ScaleOutExtentMaintenanceSpec = models_module.ScaleOutExtentMaintenanceSpec
-                body = ScaleOutExtentMaintenanceSpec(repository_ids=[self._extent_id])
-            except (ImportError, AttributeError) as e:
-                _LOGGER.error(
-                    "Failed to import ScaleOutExtentMaintenanceSpec: %s. Cannot disable sealed mode.",
-                    e,
-                )
-                return
-
-            # Call the disable sealed mode endpoint
-            try:
-                repositories_api = await asyncio.to_thread(self._veeam_client.api, "repositories")
-                await self._veeam_client.call(
-                    repositories_api.disable_scale_out_extent_sealed_mode,
-                    id=self._sobr_id,
-                    body=body,
-                )
-                _LOGGER.info(
-                    "Successfully disabled sealed mode for extent %s in SOBR %s",
-                    self._extent_name,
-                    self._sobr_name,
-                )
-                await self.coordinator.async_request_refresh()
-            except Exception as call_err:
-                _LOGGER.error(
-                    "Failed to disable sealed mode for extent %s in SOBR %s: %s",
-                    self._extent_name,
-                    self._sobr_name,
-                    call_err,
-                )
-                raise
-
-        except Exception as err:
-            _LOGGER.error(
-                "Error disabling sealed mode for extent %s in SOBR %s: %s",
-                self._extent_name,
-                self._sobr_name,
-                err,
-            )
-            raise
-
 
 class VeeamSOBRExtentEnableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
     """Button to enable maintenance mode for a SOBR extent."""
+
+    _operation = "enable_scale_out_extent_maintenance_mode"
+    _action = "enable maintenance mode on"
 
     def __init__(self, coordinator, config_entry, sobr_data, extent_data, veeam_client):
         """Initialize the button."""
@@ -579,64 +502,12 @@ class VeeamSOBRExtentEnableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
         """Return the icon for the button."""
         return "mdi:tools"
 
-    async def async_press(self) -> None:
-        """Handle the button press to enable maintenance mode for the extent."""
-        try:
-            # Get the API version
-            api_version = configured_api_version(self._config_entry)
-            api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
-
-            # Import the body model for the request
-            try:
-                models_module = await asyncio.to_thread(
-                    importlib.import_module,
-                    f"veeam_br.{api_module}.models.scale_out_extent_maintenance_spec",
-                )
-                ScaleOutExtentMaintenanceSpec = models_module.ScaleOutExtentMaintenanceSpec
-                body = ScaleOutExtentMaintenanceSpec(repository_ids=[self._extent_id])
-            except (ImportError, AttributeError) as e:
-                _LOGGER.error(
-                    "Failed to import ScaleOutExtentMaintenanceSpec: %s. "
-                    "Cannot enable maintenance mode.",
-                    e,
-                )
-                return
-
-            # Call the enable maintenance mode endpoint
-            try:
-                repositories_api = await asyncio.to_thread(self._veeam_client.api, "repositories")
-                await self._veeam_client.call(
-                    repositories_api.enable_scale_out_extent_maintenance_mode,
-                    id=self._sobr_id,
-                    body=body,
-                )
-                _LOGGER.info(
-                    "Successfully enabled maintenance mode for extent %s in SOBR %s",
-                    self._extent_name,
-                    self._sobr_name,
-                )
-                await self.coordinator.async_request_refresh()
-            except Exception as call_err:
-                _LOGGER.error(
-                    "Failed to enable maintenance mode for extent %s in SOBR %s: %s",
-                    self._extent_name,
-                    self._sobr_name,
-                    call_err,
-                )
-                raise
-
-        except Exception as err:
-            _LOGGER.error(
-                "Error enabling maintenance mode for extent %s in SOBR %s: %s",
-                self._extent_name,
-                self._sobr_name,
-                err,
-            )
-            raise
-
 
 class VeeamSOBRExtentDisableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
     """Button to disable maintenance mode for a SOBR extent."""
+
+    _operation = "disable_scale_out_extent_maintenance_mode"
+    _action = "disable maintenance mode on"
 
     def __init__(self, coordinator, config_entry, sobr_data, extent_data, veeam_client):
         """Initialize the button."""
@@ -652,116 +523,36 @@ class VeeamSOBRExtentDisableMaintenanceModeButton(VeeamSOBRExtentButtonBase):
         """Return the icon for the button."""
         return "mdi:close-circle-outline"
 
-    async def async_press(self) -> None:
-        """Handle the button press to disable maintenance mode for the extent."""
-        try:
-            # Get the API version
-            api_version = configured_api_version(self._config_entry)
-            api_module = API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
-
-            # Import the body model for the request
-            try:
-                models_module = await asyncio.to_thread(
-                    importlib.import_module,
-                    f"veeam_br.{api_module}.models.scale_out_extent_maintenance_spec",
-                )
-                ScaleOutExtentMaintenanceSpec = models_module.ScaleOutExtentMaintenanceSpec
-                body = ScaleOutExtentMaintenanceSpec(repository_ids=[self._extent_id])
-            except (ImportError, AttributeError) as e:
-                _LOGGER.error(
-                    "Failed to import ScaleOutExtentMaintenanceSpec: %s. "
-                    "Cannot disable maintenance mode.",
-                    e,
-                )
-                return
-
-            # Call the disable maintenance mode endpoint
-            try:
-                repositories_api = await asyncio.to_thread(self._veeam_client.api, "repositories")
-                await self._veeam_client.call(
-                    repositories_api.disable_scale_out_extent_maintenance_mode,
-                    id=self._sobr_id,
-                    body=body,
-                )
-                _LOGGER.info(
-                    "Successfully disabled maintenance mode for extent %s in SOBR %s",
-                    self._extent_name,
-                    self._sobr_name,
-                )
-                await self.coordinator.async_request_refresh()
-            except Exception as call_err:
-                _LOGGER.error(
-                    "Failed to disable maintenance mode for extent %s in SOBR %s: %s",
-                    self._extent_name,
-                    self._sobr_name,
-                    call_err,
-                )
-                raise
-
-        except Exception as err:
-            _LOGGER.error(
-                "Error disabling maintenance mode for extent %s in SOBR %s: %s",
-                self._extent_name,
-                self._sobr_name,
-                err,
-            )
-            raise
-
 
 # ===========================
 # JOB BUTTONS
 # ===========================
 
 
-class VeeamJobButtonBase(CoordinatorEntity, ButtonEntity):
+class VeeamJobButtonBase(VeeamButtonBase):
     """Base class for Veeam job buttons."""
 
-    _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator, config_entry, job_data, veeam_client):
         """Initialize the job button."""
-        super().__init__(coordinator)
-        self._config_entry = config_entry
+        super().__init__(coordinator, config_entry, veeam_client)
         self._job_id = job_data.get("id")
         self._job_name = job_data.get("name", "Unknown Job")
-        self._veeam_client = veeam_client
 
     @property
     def device_info(self):
         """Return device info for this job."""
-        return {
-            "identifiers": {(DOMAIN, f"job_{self._job_id}")},
-            "name": f"{self._job_name}",
-            "manufacturer": "Veeam",
-            "model": "Backup Job",
-        }
+        return job_device_info(self._job_id, self._job_name)
 
-    def _get_api_module(self) -> str:
-        """Get the API module name based on the configured API version."""
-        api_version = configured_api_version(self._config_entry)
-        return API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
+    @property
+    def _target(self) -> str:
+        return f"job {self._job_name}"
 
-    async def _import_spec_model(self, spec_name: str):
-        """Import a spec model from the veeam_br library.
-
-        Args:
-            spec_name: Name of the spec model (e.g., 'job_start_spec', 'job_stop_spec')
-
-        Returns:
-            The spec model class
-
-        Raises:
-            ImportError: If the model cannot be imported
-            AttributeError: If the model class cannot be found
-        """
-        api_module = self._get_api_module()
-        models_module = await asyncio.to_thread(
-            importlib.import_module, f"veeam_br.{api_module}.models.{spec_name}"
-        )
-        # Convert snake_case to PascalCase for class name
+    def _spec(self, spec_name: str, action: str):
+        """A job spec model, e.g. job_start_spec -> JobStartSpec."""
         class_name = "".join(word.capitalize() for word in spec_name.split("_"))
-        return getattr(models_module, class_name)
+        return self._spec_class(spec_name, class_name, action, self._target)
 
 
 class VeeamJobStartButton(VeeamJobButtonBase):
@@ -780,34 +571,10 @@ class VeeamJobStartButton(VeeamJobButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to start the job."""
-        # Import the body model for the start request
-        try:
-            JobStartSpec = await self._import_spec_model("job_start_spec")
-            body = JobStartSpec(perform_active_full=False)
-        except (ImportError, AttributeError) as e:
-            _LOGGER.error("Failed to import JobStartSpec: %s. Cannot start job.", e)
-            return
-
-        # Call the start endpoint using VeeamClient
-        try:
-            jobs_api = await asyncio.to_thread(self._veeam_client.api, "jobs")
-            result = await self._veeam_client.call(
-                jobs_api.start_job,
-                id=self._job_id,
-                body=body,
-            )
-            if hasattr(result, "error_code"):
-                raise HomeAssistantError(f"API error: {result.message}")
-            _LOGGER.info("Successfully started job: %s", self._job_name)
-            # Request coordinator update to refresh job state
-            await self.coordinator.async_request_refresh()
-        except Exception as call_err:
-            _LOGGER.error(
-                "Failed to start job %s: %s",
-                self._job_name,
-                call_err,
-            )
-            raise
+        body = self._spec("job_start_spec", "start")(perform_active_full=False)
+        await self._async_run(
+            "jobs", "start_job", "start", self._target, id=self._job_id, body=body
+        )
 
 
 class VeeamJobStopButton(VeeamJobButtonBase):
@@ -826,35 +593,9 @@ class VeeamJobStopButton(VeeamJobButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to stop the job."""
-        # Import the body model for the stop request
-        try:
-            JobStopSpec = await self._import_spec_model("job_stop_spec")
-            # JobStopSpec typically has no required parameters
-            body = JobStopSpec()
-        except (ImportError, AttributeError) as e:
-            _LOGGER.error("Failed to import JobStopSpec: %s. Cannot stop job.", e)
-            return
-
-        # Call the stop endpoint using VeeamClient
-        try:
-            jobs_api = await asyncio.to_thread(self._veeam_client.api, "jobs")
-            result = await self._veeam_client.call(
-                jobs_api.stop_job,
-                id=self._job_id,
-                body=body,
-            )
-            if hasattr(result, "error_code"):
-                raise HomeAssistantError(f"API error: {result.message}")
-            _LOGGER.info("Successfully stopped job: %s", self._job_name)
-            # Request coordinator update to refresh job state
-            await self.coordinator.async_request_refresh()
-        except Exception as call_err:
-            _LOGGER.error(
-                "Failed to stop job %s: %s",
-                self._job_name,
-                call_err,
-            )
-            raise
+        # JobStopSpec has no required parameters
+        body = self._spec("job_stop_spec", "stop")()
+        await self._async_run("jobs", "stop_job", "stop", self._target, id=self._job_id, body=body)
 
 
 class VeeamJobRetryButton(VeeamJobButtonBase):
@@ -873,35 +614,11 @@ class VeeamJobRetryButton(VeeamJobButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to retry the job."""
-        # Import the body model for the retry request
-        try:
-            JobRetrySpec = await self._import_spec_model("job_retry_spec")
-            # JobRetrySpec typically has no required parameters
-            body = JobRetrySpec()
-        except (ImportError, AttributeError) as e:
-            _LOGGER.error("Failed to import JobRetrySpec: %s. Cannot retry job.", e)
-            return
-
-        # Call the retry endpoint using VeeamClient
-        try:
-            jobs_api = await asyncio.to_thread(self._veeam_client.api, "jobs")
-            result = await self._veeam_client.call(
-                jobs_api.retry_job,
-                id=self._job_id,
-                body=body,
-            )
-            if hasattr(result, "error_code"):
-                raise HomeAssistantError(f"API error: {result.message}")
-            _LOGGER.info("Successfully retried job: %s", self._job_name)
-            # Request coordinator update to refresh job state
-            await self.coordinator.async_request_refresh()
-        except Exception as call_err:
-            _LOGGER.error(
-                "Failed to retry job %s: %s",
-                self._job_name,
-                call_err,
-            )
-            raise
+        # JobRetrySpec has no required parameters
+        body = self._spec("job_retry_spec", "retry")()
+        await self._async_run(
+            "jobs", "retry_job", "retry", self._target, id=self._job_id, body=body
+        )
 
 
 class VeeamJobEnableButton(VeeamJobButtonBase):
@@ -920,23 +637,7 @@ class VeeamJobEnableButton(VeeamJobButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to enable the job."""
-        # Call the enable endpoint using VeeamClient
-        try:
-            jobs_api = await asyncio.to_thread(self._veeam_client.api, "jobs")
-            await self._veeam_client.call(
-                jobs_api.enable_job,
-                id=self._job_id,
-            )
-            _LOGGER.info("Successfully enabled job: %s", self._job_name)
-            # Request coordinator update to refresh job state
-            await self.coordinator.async_request_refresh()
-        except Exception as call_err:
-            _LOGGER.error(
-                "Failed to enable job %s: %s",
-                self._job_name,
-                call_err,
-            )
-            raise
+        await self._async_run("jobs", "enable_job", "enable", self._target, id=self._job_id)
 
 
 class VeeamJobDisableButton(VeeamJobButtonBase):
@@ -955,23 +656,7 @@ class VeeamJobDisableButton(VeeamJobButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to disable the job."""
-        # Call the disable endpoint using VeeamClient
-        try:
-            jobs_api = await asyncio.to_thread(self._veeam_client.api, "jobs")
-            await self._veeam_client.call(
-                jobs_api.disable_job,
-                id=self._job_id,
-            )
-            _LOGGER.info("Successfully disabled job: %s", self._job_name)
-            # Request coordinator update to refresh job state
-            await self.coordinator.async_request_refresh()
-        except Exception as call_err:
-            _LOGGER.error(
-                "Failed to disable job %s: %s",
-                self._job_name,
-                call_err,
-            )
-            raise
+        await self._async_run("jobs", "disable_job", "disable", self._target, id=self._job_id)
 
 
 # ===========================
@@ -984,16 +669,8 @@ class VeeamJobDisableButton(VeeamJobButtonBase):
 # ===========================
 
 
-class VeeamHAClusterButtonBase(CoordinatorEntity, ButtonEntity):
+class VeeamHAClusterButtonBase(VeeamButtonBase):
     """Base class for HA cluster buttons."""
-
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator, config_entry, veeam_client):
-        """Initialize the button."""
-        super().__init__(coordinator)
-        self._config_entry = config_entry
-        self._veeam_client = veeam_client
 
     def _cluster(self) -> dict | None:
         """Get HA cluster data from coordinator data."""
@@ -1013,20 +690,7 @@ class VeeamHAClusterButtonBase(CoordinatorEntity, ButtonEntity):
     @property
     def device_info(self):
         """Return device info for the HA cluster."""
-        cluster = self._cluster()
-        name = (cluster.get("name") if cluster else None) or "HA Cluster"
-        host = self._config_entry.data.get(CONF_HOST, "Unknown")
-        return {
-            "identifiers": {(DOMAIN, f"ha_cluster_{self._config_entry.entry_id}")},
-            "name": f"{name} ({host})",
-            "manufacturer": "Veeam",
-            "model": "High Availability Cluster",
-        }
-
-    def _api_module(self) -> str:
-        """Resolve the SDK package for the configured API version."""
-        api_version = configured_api_version(self._config_entry)
-        return API_VERSIONS.get(api_version, DEFAULT_API_MODULE)
+        return ha_cluster_device_info(self._config_entry, self.coordinator.data)
 
 
 class VeeamHAClusterSwitchoverButton(VeeamHAClusterButtonBase):
@@ -1045,41 +709,29 @@ class VeeamHAClusterSwitchoverButton(VeeamHAClusterButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to switch the cluster over."""
+        # The spec is optional; sending it explicitly keeps the lag check in force, so a
+        # switchover with a badly lagging secondary is refused by the server instead of
+        # silently promoting a stale node.
+        kwargs: dict[str, Any] = {}
         try:
-            api_module = self._api_module()
+            models_module = importlib.import_module(
+                f"veeam_br.{self._api_module()}.models.high_availability_switchover_spec"
+            )
+            kwargs["body"] = models_module.HighAvailabilitySwitchoverSpec(ignore_lag=False)
+        except (ImportError, AttributeError) as err:
+            _LOGGER.debug(
+                "HighAvailabilitySwitchoverSpec unavailable (%s); "
+                "requesting switchover without a body",
+                err,
+            )
 
-            # The spec is optional; sending it explicitly keeps the lag check in force, so a
-            # switchover with a badly lagging secondary is refused by the server instead of
-            # silently promoting a stale node.
-            body = None
-            try:
-                models_module = await asyncio.to_thread(
-                    importlib.import_module,
-                    f"veeam_br.{api_module}.models.high_availability_switchover_spec",
-                )
-                body = models_module.HighAvailabilitySwitchoverSpec(ignore_lag=False)
-            except (ImportError, AttributeError) as err:
-                _LOGGER.debug(
-                    "HighAvailabilitySwitchoverSpec unavailable (%s); "
-                    "requesting switchover without a body",
-                    err,
-                )
-
-            try:
-                ha_api = await asyncio.to_thread(
-                    self._veeam_client.api, "high_availability_ha_cluster"
-                )
-                kwargs = {"body": body} if body is not None else {}
-                await self._veeam_client.call(ha_api.switchover_high_availability_cluster, **kwargs)
-                _LOGGER.info("Requested HA cluster switchover")
-                await self.coordinator.async_request_refresh()
-            except Exception as call_err:
-                _LOGGER.error("Failed to switch over the HA cluster: %s", call_err)
-                raise
-
-        except Exception as err:
-            _LOGGER.error("Error switching over the HA cluster: %s", err)
-            raise
+        await self._async_run(
+            "high_availability_ha_cluster",
+            "switchover_high_availability_cluster",
+            "switch over",
+            "the HA cluster",
+            **kwargs,
+        )
 
 
 class VeeamHAClusterFailoverButton(VeeamHAClusterButtonBase):
@@ -1102,14 +754,13 @@ class VeeamHAClusterFailoverButton(VeeamHAClusterButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to fail the cluster over."""
-        try:
-            ha_api = await asyncio.to_thread(self._veeam_client.api, "high_availability_ha_cluster")
-            await self._veeam_client.call(ha_api.failover_high_availability_cluster)
-            _LOGGER.warning("Requested HA cluster failover")
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            _LOGGER.error("Failed to fail over the HA cluster: %s", err)
-            raise
+        _LOGGER.warning("Requesting HA cluster failover")
+        await self._async_run(
+            "high_availability_ha_cluster",
+            "failover_high_availability_cluster",
+            "fail over",
+            "the HA cluster",
+        )
 
 
 # ===========================
@@ -1120,17 +771,14 @@ class VeeamHAClusterFailoverButton(VeeamHAClusterButtonBase):
 # ===========================
 
 
-class VeeamProxyButtonBase(CoordinatorEntity, ButtonEntity):
+class VeeamProxyButtonBase(VeeamButtonBase):
     """Base class for proxy buttons."""
 
-    _attr_has_entity_name = True
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, coordinator, config_entry, proxy_data, veeam_client):
         """Initialize the button."""
-        super().__init__(coordinator)
-        self._config_entry = config_entry
-        self._veeam_client = veeam_client
+        super().__init__(coordinator, config_entry, veeam_client)
         self._proxy_id = proxy_data.get("id")
         self._proxy_name = proxy_data.get("name", "Unknown")
 
@@ -1149,23 +797,13 @@ class VeeamProxyButtonBase(CoordinatorEntity, ButtonEntity):
     @property
     def device_info(self):
         """Return device info for this proxy."""
-        return {
-            "identifiers": {(DOMAIN, f"proxy_{self._proxy_id}")},
-            "name": self._proxy_name,
-            "manufacturer": "Veeam",
-            "model": "Backup Proxy",
-        }
+        return proxy_device_info(self._proxy_id, self._proxy_name)
 
     async def _call(self, operation_name: str, action: str) -> None:
         """Run one proxy operation and refresh."""
-        try:
-            proxies_api = await asyncio.to_thread(self._veeam_client.api, "proxies")
-            await self._veeam_client.call(getattr(proxies_api, operation_name), id=self._proxy_id)
-            _LOGGER.info("%s proxy %s", action, self._proxy_name)
-            await self.coordinator.async_request_refresh()
-        except Exception as err:
-            _LOGGER.error("Failed to %s proxy %s: %s", action.lower(), self._proxy_name, err)
-            raise
+        await self._async_run(
+            "proxies", operation_name, action, f"proxy {self._proxy_name}", id=self._proxy_id
+        )
 
 
 class VeeamProxyEnableButton(VeeamProxyButtonBase):
@@ -1182,7 +820,7 @@ class VeeamProxyEnableButton(VeeamProxyButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to enable the proxy."""
-        await self._call("enable_proxy", "Enabled")
+        await self._call("enable_proxy", "enable")
 
 
 class VeeamProxyDisableButton(VeeamProxyButtonBase):
@@ -1199,4 +837,4 @@ class VeeamProxyDisableButton(VeeamProxyButtonBase):
 
     async def async_press(self) -> None:
         """Handle the button press to disable the proxy."""
-        await self._call("disable_proxy", "Disabled")
+        await self._call("disable_proxy", "disable")

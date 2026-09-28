@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Verbindung zum Veeam-Server fehlgeschlagen",
       "invalid_auth": "Ungültige Anmeldedaten",
-      "unknown": "Ein unerwarteter Fehler ist aufgetreten"
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten",
+      "wrong_port": "Auf diesem Port war keine Verbindung möglich, aber die Veeam REST API hat auf Port {wrong_port} geantwortet. Veeam B&R 13.1 und neuer stellen die API auf Port 443 bereit; ältere Versionen verwenden 9419."
     },
     "abort": {
       "already_configured": "Dieser Veeam-Server ist bereits konfiguriert",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Verbindung zum Veeam-Server fehlgeschlagen",
       "invalid_auth": "Ungültige Anmeldedaten",
-      "unknown": "Ein unerwarteter Fehler ist aufgetreten"
+      "unknown": "Ein unerwarteter Fehler ist aufgetreten",
+      "wrong_port": "Auf diesem Port war keine Verbindung möglich, aber die Veeam REST API hat auf Port {wrong_port} geantwortet. Veeam B&R 13.1 und neuer stellen die API auf Port 443 bereit; ältere Versionen verwenden 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Ungültige Antwort vom Veeam-Server erhalten"
+    },
+    "action_failed": {
+      "message": "{action} für {target} fehlgeschlagen: {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam hat {action} für {target} abgelehnt: {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Abgelaufen",
         "invalid": "Ungültig"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Nicht unterstützte Veeam-Lizenz auf {host}",
+      "description": "Der Veeam Backup & Replication Server **{host}** meldet die Lizenz **{license}**.\n\nVeeam Community Edition und Server ohne installierte Lizenz werden von dieser Integration nicht unterstützt: Die Berechtigungen unterscheiden sich, und einige REST-API-Endpunkte antworten anders oder gar nicht, sodass Entitäten fehlen oder unzuverlässig sein können.\n\nDie Integration läuft weiter — nichts wird blockiert. Wenn Probleme auftreten, gib bitte diese Lizenzedition in deinem Fehlerbericht an. Installiere eine unterstützte Lizenz oder entferne die Integration, um diese Warnung zu entfernen."
     }
   }
 }

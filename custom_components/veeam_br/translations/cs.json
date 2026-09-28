@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Připojení k serveru Veeam se nezdařilo",
       "invalid_auth": "Neplatné přihlašovací údaje",
-      "unknown": "Došlo k neočekávané chybě"
+      "unknown": "Došlo k neočekávané chybě",
+      "wrong_port": "Na tomto portu se nepodařilo připojit, ale Veeam REST API odpovědělo na portu {wrong_port}. Veeam B&R 13.1 a novější poskytují API na portu 443; starší verze používají 9419."
     },
     "abort": {
       "already_configured": "Tento server Veeam je již nakonfigurován",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Připojení k serveru Veeam se nezdařilo",
       "invalid_auth": "Neplatné přihlašovací údaje",
-      "unknown": "Došlo k neočekávané chybě"
+      "unknown": "Došlo k neočekávané chybě",
+      "wrong_port": "Na tomto portu se nepodařilo připojit, ale Veeam REST API odpovědělo na portu {wrong_port}. Veeam B&R 13.1 a novější poskytují API na portu 443; starší verze používají 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Obdržena neplatná odpověď ze serveru Veeam"
+    },
+    "action_failed": {
+      "message": "Nepodařilo se provést akci {action} pro {target}: {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam odmítl provést akci {action} pro {target}: {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Vypršela",
         "invalid": "Neplatná"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Nepodporovaná licence Veeam na {host}",
+      "description": "Server Veeam Backup & Replication **{host}** hlásí licenci **{license}**.\n\nVeeam Community Edition a servery bez nainstalované licence tato integrace nepodporuje: oprávnění se liší a některé koncové body REST API odpovídají jinak nebo vůbec, takže entity mohou chybět nebo být nespolehlivé.\n\nIntegrace dál běží — nic není blokováno. Pokud narazíte na problémy, uveďte prosím tuto edici licence v hlášení chyby. Toto upozornění zmizí po instalaci podporované licence nebo po odebrání integrace."
     }
   }
 }

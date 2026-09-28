@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "无法连接到 Veeam 服务器",
       "invalid_auth": "身份验证凭据无效",
-      "unknown": "发生意外错误"
+      "unknown": "发生意外错误",
+      "wrong_port": "无法通过该端口连接，但 Veeam REST API 在端口 {wrong_port} 上作出了响应。Veeam B&R 13.1 及更高版本在 443 端口提供 API；更早的版本使用 9419。"
     },
     "abort": {
       "already_configured": "此 Veeam 服务器已配置",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "无法连接到 Veeam 服务器",
       "invalid_auth": "身份验证凭据无效",
-      "unknown": "发生意外错误"
+      "unknown": "发生意外错误",
+      "wrong_port": "无法通过该端口连接，但 Veeam REST API 在端口 {wrong_port} 上作出了响应。Veeam B&R 13.1 及更高版本在 443 端口提供 API；更早的版本使用 9419。"
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "从 Veeam 服务器收到无效响应"
+    },
+    "action_failed": {
+      "message": "无法对 {target} 执行“{action}”：{error}"
+    },
+    "action_rejected": {
+      "message": "Veeam 拒绝对 {target} 执行“{action}”：{error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "已过期",
         "invalid": "无效"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "{host} 上的 Veeam 许可证不受支持",
+      "description": "位于 **{host}** 的 Veeam Backup & Replication 服务器报告的许可证为 **{license}**。\n\n此集成不支持 Veeam Community Edition 以及未安装许可证的服务器：授权范围不同，部分 REST API 端点的响应方式不同或根本不响应，因此实体可能缺失或不可靠。\n\n集成会继续运行，不会阻止任何功能。如果遇到问题，请在错误报告中注明此许可证版本。安装受支持的许可证或移除此集成即可清除此警告。"
     }
   }
 }

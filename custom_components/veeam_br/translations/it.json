@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Connessione al server Veeam non riuscita",
       "invalid_auth": "Credenziali di autenticazione non valide",
-      "unknown": "Si è verificato un errore imprevisto"
+      "unknown": "Si è verificato un errore imprevisto",
+      "wrong_port": "Impossibile connettersi su quella porta, ma l'API REST di Veeam ha risposto sulla porta {wrong_port}. Veeam B&R 13.1 e versioni successive espongono l'API sulla porta 443; le versioni precedenti usano la 9419."
     },
     "abort": {
       "already_configured": "Questo server Veeam è già configurato",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Connessione al server Veeam non riuscita",
       "invalid_auth": "Credenziali di autenticazione non valide",
-      "unknown": "Si è verificato un errore imprevisto"
+      "unknown": "Si è verificato un errore imprevisto",
+      "wrong_port": "Impossibile connettersi su quella porta, ma l'API REST di Veeam ha risposto sulla porta {wrong_port}. Veeam B&R 13.1 e versioni successive espongono l'API sulla porta 443; le versioni precedenti usano la 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Ricevuta risposta non valida dal server Veeam"
+    },
+    "action_failed": {
+      "message": "Impossibile eseguire {action} su {target}: {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam ha rifiutato {action} su {target}: {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Scaduta",
         "invalid": "Non valida"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Licenza Veeam non supportata su {host}",
+      "description": "Il server Veeam Backup & Replication **{host}** riporta la licenza **{license}**.\n\nVeeam Community Edition e i server senza licenza installata non sono supportati da questa integrazione: i diritti sono diversi e alcuni endpoint dell'API REST rispondono in modo diverso o non rispondono affatto, quindi alcune entità potrebbero mancare o non essere affidabili.\n\nL'integrazione continua a funzionare: nulla viene bloccato. In caso di problemi, indica questa edizione della licenza nella segnalazione del bug. Installa una licenza supportata, oppure rimuovi l'integrazione, per eliminare questo avviso."
     }
   }
 }

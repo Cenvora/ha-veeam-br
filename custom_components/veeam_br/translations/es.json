@@ -55,7 +55,8 @@
     "error": {
       "cannot_connect": "Error al conectar con el servidor Veeam",
       "invalid_auth": "Credenciales de autenticación inválidas",
-      "unknown": "Se produjo un error inesperado"
+      "unknown": "Se produjo un error inesperado",
+      "wrong_port": "No se pudo conectar en ese puerto, pero la API REST de Veeam respondió en el puerto {wrong_port}. Veeam B&R 13.1 y posteriores sirven la API en el 443; las versiones anteriores usan el 9419."
     },
     "abort": {
       "already_configured": "Este servidor Veeam ya está configurado",
@@ -82,7 +83,8 @@
     "error": {
       "cannot_connect": "Error al conectar con el servidor Veeam",
       "invalid_auth": "Credenciales de autenticación inválidas",
-      "unknown": "Se produjo un error inesperado"
+      "unknown": "Se produjo un error inesperado",
+      "wrong_port": "No se pudo conectar en ese puerto, pero la API REST de Veeam respondió en el puerto {wrong_port}. Veeam B&R 13.1 y posteriores sirven la API en el 443; las versiones anteriores usan el 9419."
     }
   },
   "entity": {
@@ -255,6 +257,12 @@
     },
     "invalid_response": {
       "message": "Se recibió una respuesta inválida del servidor Veeam"
+    },
+    "action_failed": {
+      "message": "No se pudo {action} {target}: {error}"
+    },
+    "action_rejected": {
+      "message": "Veeam rechazó {action} {target}: {error}"
     }
   },
   "selector": {
@@ -281,6 +289,12 @@
         "expired": "Expirada",
         "invalid": "Inválida"
       }
+    }
+  },
+  "issues": {
+    "unsupported_license": {
+      "title": "Licencia de Veeam no compatible en {host}",
+      "description": "El servidor de Veeam Backup & Replication **{host}** informa la licencia **{license}**.\n\nVeeam Community Edition y los servidores sin licencia instalada no son compatibles con esta integración: los derechos son distintos y algunos endpoints de la API REST responden de otra forma o no responden, por lo que pueden faltar entidades o no ser fiables.\n\nLa integración sigue funcionando: no se bloquea nada. Si encuentras problemas, incluye esta edición de licencia en tu informe de error. Instala una licencia compatible, o elimina la integración, para quitar este aviso."
     }
   }
 }
