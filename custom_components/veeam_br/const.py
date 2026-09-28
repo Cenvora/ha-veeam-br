@@ -75,11 +75,11 @@ UPDATE_TIMEOUT = 240
 # Seconds for logging in, during setup and in the config flow
 CONNECT_TIMEOUT = 60
 
-# Page size for collection endpoints: as many as one request can carry, to keep requests to
-# a minimum. The 1.3 revisions default to 200 and silently drop anything beyond it, and
-# document no maximum; collections are still paged until the reported total is reached, in
-# case a server answers with fewer than asked for.
-PAGE_SIZE = 10000
+# Page size for every collection request, integration-wide: large, so that listing anything
+# takes as few requests as possible. The 1.3 revisions default to 200 and silently drop
+# anything beyond it. No maximum is documented, so collections are still paged until the
+# reported total is reached, in case a server answers with fewer than asked for.
+PAGE_LIMIT = 10000
 
 # Features gated on the API revision, named by the SDK module that provides them. Named once
 # here so the fetch, the entity gating and the pre-imports cannot disagree.

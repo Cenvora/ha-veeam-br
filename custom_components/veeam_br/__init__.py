@@ -35,7 +35,7 @@ from .const import (
     FEATURE_MALWARE_EVENTS,
     FEATURE_MALWARE_OBJECTS,
     FEATURE_PROXY_STATES,
-    PAGE_SIZE,
+    PAGE_LIMIT,
     REQUEST_TIMEOUT,
     UPDATE_INTERVAL,
     UPDATE_TIMEOUT,
@@ -737,7 +737,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         items: list = []
         skip = 0
         for _ in range(MAX_PAGES):
-            result = await veeam_client.call(operation, skip=skip, limit=PAGE_SIZE, **filters)
+            result = await veeam_client.call(operation, skip=skip, limit=PAGE_LIMIT, **filters)
             page = getattr(result, "data", None)
             if not isinstance(page, list):
                 raise UnexpectedResponseError(
@@ -751,7 +751,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if isinstance(total, int) and not isinstance(total, bool):
                 if len(items) >= total:
                     break
-            elif len(page) < PAGE_SIZE:
+            elif len(page) < PAGE_LIMIT:
                 break
             skip += len(page)
         else:
@@ -1214,11 +1214,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             and not malware_tracker.looked_up_older
         ):
             # A quiet day at startup: the latest event overall, so Last Malware Event is not
-            # unknown. One item, newest first; paging the whole history to read it would cost
-            # more requests, not fewer.
+            # unknown. One page, newest first, of which only the first item is needed; paging
+            # the whole history to read it would cost more requests, not fewer.
             result = await veeam_client.call(
                 malware_api.view_suspicious_activity_events,
-                limit=1,
+                skip=0,
+                limit=PAGE_LIMIT,
                 order_column=window["order_column"],
                 order_asc=False,
             )
@@ -1227,8 +1228,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 raise UnexpectedResponseError(
                     f"malware events endpoint answered {_describe_response(result)}"
                 )
-            parsed = parse_malware(older, parse_event, "malware event")
-            malware_tracker.last_event = parsed[0] if parsed else None
+            # Newest first: the first one that parses is the latest
+            malware_tracker.last_event = next(
+                (
+                    parsed
+                    for item in older
+                    for parsed in parse_malware([item], parse_event, "malware event")
+                ),
+                None,
+            )
             malware_tracker.looked_up_older = True
 
         for event in malware_tracker.update(recent):
