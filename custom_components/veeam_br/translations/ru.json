@@ -263,6 +263,18 @@
     },
     "action_rejected": {
       "message": "Veeam отклонил действие «{action}» для {target}: {error}"
+    },
+    "entry_not_found": {
+      "message": "Нет записи Veeam Backup & Replication с ID {entry_id}"
+    },
+    "entry_not_loaded": {
+      "message": "{title} не загружен"
+    },
+    "move_copy_unsupported": {
+      "message": "Сеансами перемещения/копирования нельзя управлять через версию API {api_version}; требуется 1.3-rev2 (Veeam B&R 13.1)"
+    },
+    "invalid_session_id": {
+      "message": "{session_id} не является ID сеанса"
     }
   },
   "selector": {
@@ -289,12 +301,39 @@
         "expired": "Истекла",
         "invalid": "Недействительна"
       }
+    },
+    "move_copy_action": {
+      "options": {
+        "retry": "Повторить",
+        "forget_failed": "Отсоединить неудачные",
+        "stop_and_undo": "Остановить и отменить"
+      }
     }
   },
   "issues": {
     "unsupported_license": {
       "title": "Неподдерживаемая лицензия Veeam на {host}",
       "description": "Сервер Veeam Backup & Replication **{host}** сообщает лицензию **{license}**.\n\nVeeam Community Edition и серверы без установленной лицензии не поддерживаются этой интеграцией: права различаются, а некоторые конечные точки REST API отвечают иначе или не отвечают вовсе, поэтому сущности могут отсутствовать или быть ненадёжными.\n\nИнтеграция продолжает работать — ничего не блокируется. Если возникнут проблемы, укажите эту редакцию лицензии в отчёте об ошибке. Установите поддерживаемую лицензию или удалите интеграцию, чтобы убрать это предупреждение."
+    }
+  },
+  "services": {
+    "manage_move_copy_session": {
+      "name": "Управление сеансом перемещения/копирования",
+      "description": "Повторить, отсоединить неудачное или остановить и отменить перемещение или копирование резервной копии, ожидающее решения. Veeam B&R 13.1 (API 1.3-rev2), роль Backup Administrator.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Сервер",
+          "description": "Сервер Veeam Backup & Replication, на котором находится сеанс."
+        },
+        "session_id": {
+          "name": "ID сеанса",
+          "description": "ID сеанса из атрибута sessions датчика Move/Copy Sessions Awaiting Action или из события veeam_br_move_copy_action_required."
+        },
+        "action": {
+          "name": "Действие",
+          "description": "Что сделать с сеансом."
+        }
+      }
     }
   }
 }

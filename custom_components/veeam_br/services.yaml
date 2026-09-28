@@ -1,0 +1,21 @@
+manage_move_copy_session:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: veeam_br
+    session_id:
+      required: true
+      example: "7c1f0a2b-3d4e-4f56-8a90-1b2c3d4e5f60"
+      selector:
+        text:
+    action:
+      required: true
+      selector:
+        select:
+          translation_key: move_copy_action
+          options:
+            - retry
+            - forget_failed
+            - stop_and_undo

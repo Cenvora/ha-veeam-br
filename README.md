@@ -199,7 +199,9 @@ Each backup job creates a device with the following sensors:
 The integration also creates devices for:
 - **Repositories**: Each repository device has sensors for type, capacity, free space, used space, online status, etc., and a rescan button.
 - **Scale-Out Backup Repositories (SOBRs)**: Each SOBR device has sensors for description, extent count, and buttons for each extent to enable/disable sealed mode and maintenance mode.
-- **Server**: Server device has sensors for build version, platform, database info, etc.
+- **Server**: Server device has sensors for build version, platform, database info, etc. On
+  Veeam B&R 13.1 (API `1.3-rev2`) it also counts backup moves and copies awaiting a decision;
+  see [Move/Copy Sessions Awaiting Action](#movecopy-sessions-awaiting-action).
 - **License**: License device has sensors for status, edition, expiration dates, and — on
   instance-based licences — instances licensed, instances used and percentage used, with the
   per-workload-type breakdown as attributes.
@@ -259,6 +261,63 @@ automation:
           message: >
             {{ trigger.event.data.type }} by {{ trigger.event.data.engine }}:
             {{ trigger.event.data.details }}
+```
+
+## Move/Copy Sessions Awaiting Action
+
+On Veeam B&R 13.1 (API `1.3-rev2`), a backup move or copy that fails part-way waits for a
+decision: retry it, detach what failed, or stop and undo it. The **Server** device's
+**Move/Copy Sessions Awaiting Action** sensor counts them. Its `sessions` attribute lists them
+longest-waiting first: ID, name, type, job, when it started, progress, and Veeam's message.
+
+The server shows these only to the **Backup Administrator** role. With any other role the
+sensor is not created, and after one refused request (logged once) the integration stops
+asking until it is reloaded. That is not reported as a failure.
+
+### The `veeam_br.manage_move_copy_session` action
+
+| Field | Value |
+| ----- | ----- |
+| `config_entry_id` | The server |
+| `session_id` | From the `sessions` attribute, or the event below |
+| `action` | `retry`, `forget_failed` (detach failed) or `stop_and_undo` |
+
+The server carries the action out in a new session. The action's response gives its
+`session_id` and `state`.
+
+### The `veeam_br_move_copy_action_required` event
+
+A session that starts waiting after Home Assistant starts is also fired on the bus, with the
+same fields as the `sessions` attribute plus `entry_id`. Sessions already waiting at startup
+are not fired again.
+
+```yaml
+automation:
+  - alias: "Veeam move/copy needs a decision"
+    trigger:
+      - platform: event
+        event_type: veeam_br_move_copy_action_required
+    action:
+      - service: notify.mobile_app_phone
+        data:
+          title: "{{ trigger.event.data.name }} needs a decision"
+          message: "{{ trigger.event.data.job_name }}: {{ trigger.event.data.message }}"
+          data:
+            actions:
+              - action: "VEEAM_RETRY_{{ trigger.event.data.id }}"
+                title: Retry
+      - wait_for_trigger:
+          - platform: event
+            event_type: mobile_app_notification_action
+            event_data:
+              action: "VEEAM_RETRY_{{ trigger.event.data.id }}"
+        timeout: "12:00:00"
+        continue_on_timeout: false
+      - service: veeam_br.manage_move_copy_session
+        data:
+          config_entry_id: "{{ trigger.event.data.entry_id }}"
+          session_id: "{{ trigger.event.data.id }}"
+          action: retry
 ```
 
 ## High Availability
@@ -609,6 +668,8 @@ The integration monitors the following Veeam objects:
 - ✅ **WAN Accelerators** - cache configuration
 - ✅ **High Availability Cluster** - cluster state, node roles and replication lag, with
   switchover and failover actions (Veeam B&R 13.1 and the `1.3-rev2` API version)
+- ✅ **Move/Copy Sessions Awaiting Action** - count, details, and retry / detach failed /
+  stop and undo (Veeam B&R 13.1 and the `1.3-rev2` API version, Backup Administrator role)
 - ✅ **Malware Detection** - malware events on every API version; infected and suspicious
   objects on Veeam B&R 13.1 and the `1.3-rev2` API version
 

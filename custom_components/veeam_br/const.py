@@ -103,6 +103,9 @@ FEATURE_HA_SWITCHOVER_SPEC = "models.high_availability_switchover_spec"
 # Malware events exist in every revision; detected objects arrive in 1.3-rev2 (VBR 13.1)
 FEATURE_MALWARE_EVENTS = "api.malware_detection.view_suspicious_activity_events"
 FEATURE_MALWARE_OBJECTS = "api.malware_detection.get_malware_detection_objects"
+# Move/copy backup sessions awaiting action, and managing them: 1.3-rev2 (VBR 13.1)
+FEATURE_MOVE_COPY_SESSIONS = "api.backups.get_move_copy_sessions"
+FEATURE_MANAGE_MOVE_COPY = "api.backups.manage_move_copy_session"
 FEATURE_JOB_START = "models.job_start_spec"
 FEATURE_JOB_STOP = "models.job_stop_spec"
 FEATURE_JOB_RETRY = "models.job_retry_spec"
@@ -125,6 +128,8 @@ ALL_FEATURES = (
     FEATURE_HA_SWITCHOVER_SPEC,
     FEATURE_MALWARE_EVENTS,
     FEATURE_MALWARE_OBJECTS,
+    FEATURE_MOVE_COPY_SESSIONS,
+    FEATURE_MANAGE_MOVE_COPY,
     FEATURE_JOB_START,
     FEATURE_JOB_STOP,
     FEATURE_JOB_RETRY,

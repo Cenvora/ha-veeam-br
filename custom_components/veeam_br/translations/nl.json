@@ -263,6 +263,18 @@
     },
     "action_rejected": {
       "message": "Veeam heeft {action} van {target} geweigerd: {error}"
+    },
+    "entry_not_found": {
+      "message": "Geen Veeam Backup & Replication-item met ID {entry_id}"
+    },
+    "entry_not_loaded": {
+      "message": "{title} is niet geladen"
+    },
+    "move_copy_unsupported": {
+      "message": "Verplaats-/kopieersessies kunnen niet worden beheerd via API-versie {api_version}; daarvoor is 1.3-rev2 (Veeam B&R 13.1) nodig"
+    },
+    "invalid_session_id": {
+      "message": "{session_id} is geen sessie-ID"
     }
   },
   "selector": {
@@ -289,12 +301,39 @@
         "expired": "Verlopen",
         "invalid": "Ongeldig"
       }
+    },
+    "move_copy_action": {
+      "options": {
+        "retry": "Opnieuw proberen",
+        "forget_failed": "Mislukte loskoppelen",
+        "stop_and_undo": "Stoppen en ongedaan maken"
+      }
     }
   },
   "issues": {
     "unsupported_license": {
       "title": "Niet-ondersteunde Veeam-licentie op {host}",
       "description": "De Veeam Backup & Replication-server **{host}** meldt de licentie **{license}**.\n\nVeeam Community Edition en servers zonder geïnstalleerde licentie worden niet ondersteund door deze integratie: de rechten verschillen en sommige REST API-eindpunten antwoorden anders of helemaal niet, waardoor entiteiten kunnen ontbreken of onbetrouwbaar zijn.\n\nDe integratie blijft werken — er wordt niets geblokkeerd. Vermeld bij problemen deze licentie-editie in je bugmelding. Installeer een ondersteunde licentie, of verwijder de integratie, om deze waarschuwing te laten verdwijnen."
+    }
+  },
+  "services": {
+    "manage_move_copy_session": {
+      "name": "Verplaats-/kopieersessie beheren",
+      "description": "Een back-upverplaatsing of -kopie die op een beslissing wacht opnieuw proberen, het mislukte loskoppelen of stoppen en ongedaan maken. Veeam B&R 13.1 (API 1.3-rev2), rol Backup Administrator.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Server",
+          "description": "De Veeam Backup & Replication-server van de sessie."
+        },
+        "session_id": {
+          "name": "Sessie-ID",
+          "description": "De ID van de sessie, uit het attribuut sessions van Move/Copy Sessions Awaiting Action of uit de gebeurtenis veeam_br_move_copy_action_required."
+        },
+        "action": {
+          "name": "Actie",
+          "description": "Wat er met de sessie moet gebeuren."
+        }
+      }
     }
   }
 }

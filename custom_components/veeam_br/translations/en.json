@@ -263,6 +263,18 @@
     },
     "action_rejected": {
       "message": "Veeam refused to {action} {target}: {error}"
+    },
+    "entry_not_found": {
+      "message": "No Veeam Backup & Replication entry with ID {entry_id}"
+    },
+    "entry_not_loaded": {
+      "message": "{title} is not loaded"
+    },
+    "move_copy_unsupported": {
+      "message": "Move/copy sessions cannot be managed over API version {api_version}; they need 1.3-rev2 (Veeam B&R 13.1)"
+    },
+    "invalid_session_id": {
+      "message": "{session_id} is not a session ID"
     }
   },
   "selector": {
@@ -289,12 +301,39 @@
         "expired": "Expired",
         "invalid": "Invalid"
       }
+    },
+    "move_copy_action": {
+      "options": {
+        "retry": "Retry",
+        "forget_failed": "Detach failed",
+        "stop_and_undo": "Stop and undo"
+      }
     }
   },
   "issues": {
     "unsupported_license": {
       "title": "Unsupported Veeam license on {host}",
       "description": "The Veeam Backup & Replication server at **{host}** reports the license **{license}**.\n\nVeeam Community Edition, and servers with no license installed, are not supported by this integration: entitlements differ and some REST API endpoints answer differently or not at all, so entities may be missing or unreliable.\n\nThe integration keeps running — nothing is blocked. If you hit problems, please include this license edition in your bug report. Install a supported license, or remove the integration, to clear this warning."
+    }
+  },
+  "services": {
+    "manage_move_copy_session": {
+      "name": "Manage move/copy session",
+      "description": "Retry, detach what failed, or stop and undo a backup move or copy that awaits a decision. Veeam B&R 13.1 (API 1.3-rev2), Backup Administrator role.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Server",
+          "description": "The Veeam Backup & Replication server the session is on."
+        },
+        "session_id": {
+          "name": "Session ID",
+          "description": "The session's ID, from the sessions attribute of Move/Copy Sessions Awaiting Action or from the veeam_br_move_copy_action_required event."
+        },
+        "action": {
+          "name": "Action",
+          "description": "What to do with the session."
+        }
+      }
     }
   }
 }

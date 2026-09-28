@@ -153,6 +153,7 @@ class FakeServer:
             ),
             ("malware_detection", "view_suspicious_activity_events"): paged([]),
             ("malware_detection", "get_malware_detection_objects"): paged([]),
+            ("backups", "get_move_copy_sessions"): [],
         }
 
     def handle(self, namespace: str, operation: str, kwargs: dict) -> Any:

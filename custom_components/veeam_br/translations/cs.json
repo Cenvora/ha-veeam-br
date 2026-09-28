@@ -263,6 +263,18 @@
     },
     "action_rejected": {
       "message": "Veeam odmítl provést akci {action} pro {target}: {error}"
+    },
+    "entry_not_found": {
+      "message": "Žádná položka Veeam Backup & Replication s ID {entry_id}"
+    },
+    "entry_not_loaded": {
+      "message": "{title} není načteno"
+    },
+    "move_copy_unsupported": {
+      "message": "Relace přesunu/kopírování nelze spravovat přes verzi API {api_version}; vyžadují 1.3-rev2 (Veeam B&R 13.1)"
+    },
+    "invalid_session_id": {
+      "message": "{session_id} není ID relace"
     }
   },
   "selector": {
@@ -289,12 +301,39 @@
         "expired": "Vypršela",
         "invalid": "Neplatná"
       }
+    },
+    "move_copy_action": {
+      "options": {
+        "retry": "Zopakovat",
+        "forget_failed": "Odpojit neúspěšné",
+        "stop_and_undo": "Zastavit a vrátit"
+      }
     }
   },
   "issues": {
     "unsupported_license": {
       "title": "Nepodporovaná licence Veeam na {host}",
       "description": "Server Veeam Backup & Replication **{host}** hlásí licenci **{license}**.\n\nVeeam Community Edition a servery bez nainstalované licence tato integrace nepodporuje: oprávnění se liší a některé koncové body REST API odpovídají jinak nebo vůbec, takže entity mohou chybět nebo být nespolehlivé.\n\nIntegrace dál běží — nic není blokováno. Pokud narazíte na problémy, uveďte prosím tuto edici licence v hlášení chyby. Toto upozornění zmizí po instalaci podporované licence nebo po odebrání integrace."
+    }
+  },
+  "services": {
+    "manage_move_copy_session": {
+      "name": "Spravovat relaci přesunu/kopírování",
+      "description": "Zopakovat, odpojit neúspěšné nebo zastavit a vrátit přesun či kopii zálohy, která čeká na rozhodnutí. Veeam B&R 13.1 (API 1.3-rev2), role Backup Administrator.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Server",
+          "description": "Server Veeam Backup & Replication, na kterém relace běží."
+        },
+        "session_id": {
+          "name": "ID relace",
+          "description": "ID relace z atributu sessions senzoru Move/Copy Sessions Awaiting Action nebo z události veeam_br_move_copy_action_required."
+        },
+        "action": {
+          "name": "Akce",
+          "description": "Co s relací udělat."
+        }
+      }
     }
   }
 }
