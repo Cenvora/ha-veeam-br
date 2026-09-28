@@ -58,14 +58,15 @@ triggers:
 
 variables:
   event: "{{ trigger.id }}"
+  # The device is "VBR HA Cluster <name>": the "VBR " prefix is dropped, a user's name kept
   cluster_name: >-
     {{ device_attr(trigger.entity_id, 'name_by_user')
-       or device_attr(trigger.entity_id, 'name')
+       or (device_attr(trigger.entity_id, 'name') or '') | regex_replace('^VBR ', '')
        or 'Veeam HA cluster' }}
   title: >-
-    {{ 'Veeam HA cluster failing over: ' ~ cluster_name
+    {{ 'Veeam: ' ~ cluster_name ~ ' is failing over'
        if event == 'failover'
-       else 'Veeam HA cluster offline: ' ~ cluster_name }}
+       else 'Veeam: ' ~ cluster_name ~ ' is offline' }}
   message: >-
     {{ 'A failover is in progress on ' ~ cluster_name ~ '. The secondary node is taking over.'
        if event == 'failover'

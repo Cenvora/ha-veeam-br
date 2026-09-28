@@ -86,15 +86,17 @@ variables:
   threshold: !input threshold
   repository_entity_id: "{{ trigger.entity_id }}"
   used_percent: "{{ trigger.to_state.state }}"
-  # Each repository is its own device, so the device name is the repository name
+  # Each repository or extent is its own device, named "VBR Repository <name>" (or "VBR <name>"
+  # when the name already says Repository). The "VBR " prefix is dropped and the kind kept, so
+  # the messages lead with the name; a name the user gave the device is used as-is.
   repository_name: >-
     {{ device_attr(trigger.entity_id, 'name_by_user')
-       or device_attr(trigger.entity_id, 'name')
-       or trigger.to_state.name | replace(' Used Percentage', '') }}
+       or (device_attr(trigger.entity_id, 'name') or '') | regex_replace('^VBR ', '')
+       or trigger.to_state.name | replace(' Used Percentage', '') | regex_replace('^VBR ', '') }}
   title: >-
-    {{ 'Veeam repository low on space: ' ~ repository_name
+    {{ 'Veeam: ' ~ repository_name ~ ' is low on space'
        if trigger.id == 'above'
-       else 'Veeam repository space recovered: ' ~ repository_name }}
+       else 'Veeam: ' ~ repository_name ~ ' has space again' }}
   message: >-
     {{ repository_name }} is {{ used_percent }}% full
     {{ '(threshold ' ~ threshold ~ '%)' if trigger.id == 'above' else '— back under ' ~ threshold ~ '%' }}.

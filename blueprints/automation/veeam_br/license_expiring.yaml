@@ -67,7 +67,8 @@ variables:
           {% set days_left = ((expires - now()).total_seconds() / 86400) | round(0, 'floor') | int %}
           {% if days_left <= days_before %}
             {% set ns.items = ns.items + [{
-                 'name': state_attr(entity_id, 'friendly_name') or entity_id,
+                 'name': (state_attr(entity_id, 'friendly_name') or entity_id)
+                         | regex_replace('^VBR ', ''),
                  'entity_id': entity_id,
                  'days_left': days_left,
                  'expires': expires.isoformat(),
