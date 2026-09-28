@@ -2,3 +2,7 @@
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 pytest-homeassistant-custom-component>=0.13.0
+# The SDK itself: without it the tests that exercise the generated models are skipped.
+# The manifest requires 0.5.1 (VeeamClient timeout, veeam_br.exceptions); raise this floor to
+# match once 0.5.1 is published to PyPI.
+veeam-br>=0.5.0

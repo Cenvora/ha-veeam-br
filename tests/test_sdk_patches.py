@@ -275,8 +275,11 @@ def test_patch_models_covers_the_whole_models_package(package):
         if name.startswith(f"{models_package}.")
     }
 
-    patched = sdk_patches.patch_models(models_package, unset, modules)
+    sdk_patches.patch_models(models_package, unset, modules)
 
+    # Counted by marker rather than by return value: another test in this process may have
+    # set the integration up already, which patches the same modules first
+    patched = sum(bool(getattr(m, sdk_patches.PATCH_MARKER, False)) for m in modules.values())
     assert patched > 100, f"expected the full models package, patched only {patched}"
 
     # Re-running is idempotent
@@ -420,3 +423,68 @@ def test_a_huge_non_object_payload_is_truncated():
 
     assert len(str(raised.value)) < sdk_patches.UNEXPECTED_PAYLOAD_CHARS + 200
     assert str(raised.value).endswith("...")
+
+
+# ---------------------------------------------------------------------------
+# Unknown enum value — a job type or status newer than the SDK revision
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("package", sorted(set(veeam_br_versions.values())))
+def test_unknown_enum_value_is_kept_instead_of_losing_the_job(package):
+    """EJobStatus("SomethingNew") raised ValueError, and the whole jobs response went."""
+    sdk_patches = _load_sdk_patches()
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "job_state_model")
+    payload = job_payload(package, module, status="SomethingNew")
+
+    with pytest.raises(ValueError, match="SomethingNew"):
+        module.JobStateModel.from_dict(dict(payload))
+
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    job = module.JobStateModel.from_dict(dict(payload))
+    assert job.status == "SomethingNew"
+    assert isinstance(job.status, sdk_patches.UnknownEnumValue)
+    # Reads like a member wherever the integration or the SDK reaches for .value
+    assert job.status.value == "SomethingNew"
+    assert job.to_dict()["status"] == "SomethingNew", "to_dict must still serialize it"
+
+
+def test_non_string_enum_values_still_raise():
+    """Only a string can be a newer member; anything else is a real protocol problem."""
+    sdk_patches = _load_sdk_patches()
+    package = sorted(set(veeam_br_versions.values()))[0]
+    unset = importlib.import_module(f"{package}.types").UNSET
+
+    module = _fresh_model_module(package, "job_state_model")
+    sdk_patches.patch_null_values(module, unset)
+
+    with pytest.raises(ValueError):
+        module.EJobStatus(42)
+
+
+# ---------------------------------------------------------------------------
+# isinstance(x, UUID) — used by some generated to_dict methods
+# ---------------------------------------------------------------------------
+
+
+def test_patched_uuid_still_works_with_isinstance():
+    """DiskPartitionModel.to_dict checks isinstance(value, UUID); a function there raises."""
+    package = "veeam_br.v1_3_rev2"
+    if package not in set(veeam_br_versions.values()):
+        pytest.skip("this veeam-br has no 1.3-rev2")
+    sdk_patches = _load_sdk_patches()
+    unset = importlib.import_module(f"{package}.types").UNSET
+    import uuid
+
+    module = _fresh_model_module(package, "disk_partition_model")
+    assert sdk_patches.patch_null_values(module, unset) is True
+
+    value = uuid.UUID("6f1f0f8a-0000-4000-8000-000000000001")
+    assert isinstance(value, module.UUID)
+    assert not isinstance("not-a-uuid", module.UUID)
+    assert issubclass(uuid.UUID, module.UUID)
+    assert module.UUID(None) is unset
+    assert module.UUID(str(value)) == value

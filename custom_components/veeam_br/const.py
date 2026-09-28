@@ -1,12 +1,18 @@
 """Constants for the Veeam Backup & Replication integration."""
 
+import functools
 import importlib.util
-import logging
-import os
-import re
+
+from veeam_br.discovery import newest_first
+from veeam_br.versions import VERSION_TO_PACKAGE
 
 DOMAIN = "veeam_br"
 DEFAULT_NAME = "Veeam Backup & Replication"
+
+# Prefix for every device this integration creates. Entities use has_entity_name, so their
+# entity IDs start with the device name; the prefix keeps them together and tells them apart
+# from the Veeam Backup for Microsoft 365 integration, which uses "VB365 ".
+DEVICE_NAME_PREFIX = "VBR"
 
 # Configuration keys
 CONF_VERIFY_SSL = "verify_ssl"
@@ -22,96 +28,112 @@ DEFAULT_PORT = 443
 # Pre-13.1 REST API port, still accepted by 13.1 and deprecated
 LEGACY_PORT = 9419
 DEFAULT_VERIFY_SSL = True
-# Newest API revision shipped by veeam-br, served by Veeam B&R 13.1. Bump this together
-# with FALLBACK_API_VERSIONS when veeam-br adds a revision. Users on older servers can
-# select an older revision in the config flow; the flow validates the connection, so a
-# revision the server does not serve fails at setup rather than silently.
-DEFAULT_API_VERSION = "1.3-rev2"
 
 # Selector sentinel: probe the server for the newest API version it serves (see
-# api_discovery). Never stored on a config entry — it resolves to a concrete version when
-# the entry is created or reconfigured, so a later server upgrade cannot silently change
-# which revision an existing entry talks.
+# veeam_br.discovery). It is a user intent rather than a version and is stored on the entry
+# as-is: every setup resolves it again, so a server upgrade or a veeam-br release that adds a
+# newer revision is picked up on the next restart. The resolved value lives in
+# entry.runtime_data (see configured_api_version).
 AUTO_API_VERSION = "auto"
 
-_LOGGER = logging.getLogger(__name__)
 
-# Fallback used when the veeam-br package cannot be inspected. Mirrors the
-# versions shipped by veeam-br >= 0.3.0 (see veeam_br.versions.VERSION_TO_PACKAGE);
-# 1.3-rev2 is the API version served by Veeam B&R 13.1.
-FALLBACK_API_VERSIONS = {
-    "1.2-rev1": "v1_2_rev1",
-    "1.3-rev0": "v1_3_rev0",
-    "1.3-rev1": "v1_3_rev1",
-    "1.3-rev2": "v1_3_rev2",
-}
+def _api_versions() -> dict[str, str]:
+    """Map each API version veeam-br ships to its package directory, oldest first.
 
-# Package directory backing DEFAULT_API_VERSION, used when a stored API version is unknown
-DEFAULT_API_MODULE = FALLBACK_API_VERSIONS[DEFAULT_API_VERSION]
-
-# Pattern to match version directories: v{major}_{minor}_rev{revision}
-_API_VERSION_PATTERN = re.compile(r"^v(\d+)_(\d+)_rev(\d+)$")
-
-
-def _discover_api_versions() -> dict[str, str]:
-    """Dynamically discover available API versions from the veeam-br package.
-
-    Returns:
-        dict: Mapping of display version (e.g., "1.2-rev1") to module name (e.g., "v1_2_rev1"),
-            ordered oldest to newest.
+    The SDK's own table is the authority: a version it does not list cannot be spoken, and
+    one it adds is offered without a change here.
     """
-    discovered: list[tuple[tuple[int, int, int], str, str]] = []
-
-    try:
-        # Find the veeam_br package
-        spec = importlib.util.find_spec("veeam_br")
-        if spec is None:
-            _LOGGER.warning("veeam_br package not found, using default API versions")
-            return dict(FALLBACK_API_VERSIONS)
-
-        # Get the package directory (handle namespace packages)
-        if spec.submodule_search_locations:
-            veeam_br_path = spec.submodule_search_locations[0]
-        elif spec.origin:
-            veeam_br_path = os.path.dirname(spec.origin)
-        else:
-            _LOGGER.warning("Could not determine veeam_br package path, using defaults")
-            return dict(FALLBACK_API_VERSIONS)
-
-        # Scan for version directories
-        for item in os.listdir(veeam_br_path):
-            match = _API_VERSION_PATTERN.match(item)
-            if match and os.path.isdir(os.path.join(veeam_br_path, item)):
-                major, minor, rev = match.groups()
-                # Convert to display format: "1.2-rev1"
-                display_version = f"{major}.{minor}-rev{rev}"
-                discovered.append(((int(major), int(minor), int(rev)), display_version, item))
-
-        if not discovered:
-            _LOGGER.warning("No API versions found in veeam_br package, using defaults")
-            return dict(FALLBACK_API_VERSIONS)
-
-        # Sort numerically so the selector order does not depend on filesystem ordering
-        versions = {display: module for _, display, module in sorted(discovered)}
-
-        _LOGGER.debug("Discovered API versions: %s", list(versions.keys()))
-
-    except Exception as err:
-        _LOGGER.warning("Failed to discover API versions: %s, using defaults", err)
-        return dict(FALLBACK_API_VERSIONS)
-
-    return versions
+    return {
+        version: VERSION_TO_PACKAGE[version].rsplit(".", 1)[-1]
+        for version in reversed(newest_first(VERSION_TO_PACKAGE))
+    }
 
 
-# API Version options - dynamically discovered from veeam-br package
-API_VERSIONS = _discover_api_versions()
+# API version options, e.g. {"1.2-rev1": "v1_2_rev1", ..., "1.3-rev2": "v1_3_rev2"}
+API_VERSIONS = _api_versions()
+
+# Newest API revision veeam-br ships (1.3-rev2 is served by Veeam B&R 13.1). Used when auto
+# detection cannot tell, and for entries that predate the option. Users on older servers can
+# pick an older revision; the config flow validates the connection, so a revision the server
+# does not serve fails at setup rather than silently.
+DEFAULT_API_VERSION = next(reversed(API_VERSIONS))
+
+# Package directory backing DEFAULT_API_VERSION
+DEFAULT_API_MODULE = API_VERSIONS[DEFAULT_API_VERSION]
 
 # Update interval
 UPDATE_INTERVAL = 60  # seconds
 
+# Seconds for one HTTP request. veeam-br applies it per request, so a hung server fails that
+# call instead of stalling the integration.
+REQUEST_TIMEOUT = 30.0
 
+# Seconds for one whole poll. A poll makes a dozen requests and pages through large
+# collections, so this is generous; it exists so that a poll can never run forever.
+UPDATE_TIMEOUT = 240
+
+# Seconds for logging in, during setup and in the config flow
+CONNECT_TIMEOUT = 60
+
+# Page size for collection endpoints. The 1.3 revisions default to 200 and silently drop
+# anything beyond it, so collections are paged until the reported total is reached.
+PAGE_SIZE = 200
+
+# Features gated on the API revision, named by the SDK module that provides them. Named once
+# here so the fetch, the entity gating and the pre-imports cannot disagree.
+FEATURE_JOBS = "api.jobs"
+FEATURE_REPOSITORIES = "api.repositories"
+FEATURE_SERVICE = "api.service"
+FEATURE_LICENSE = "api.license_"
+FEATURE_PROXIES = "api.proxies"
+FEATURE_WAN_ACCELERATORS = "api.wan_accelerators"
+# The proxy states endpoint arrived in API 1.3-rev0 (VBR 13). On 1.2-rev1 only the
+# configuration endpoint exists, so online/disabled/out-of-date are unknown there (#104).
+FEATURE_PROXY_STATES = "api.proxies.get_all_proxies_states"
+# enable_proxy/disable_proxy arrived in 1.3-rev0 as well
+FEATURE_PROXY_ENABLE = "api.proxies.enable_proxy"
+FEATURE_PROXY_DISABLE = "api.proxies.disable_proxy"
+# High Availability cluster endpoints exist only from API 1.3-rev2 (VBR 13.1)
+FEATURE_HA_CLUSTER = "api.high_availability_ha_cluster"
+FEATURE_HA_SWITCHOVER = "api.high_availability_ha_cluster.switchover_high_availability_cluster"
+FEATURE_HA_FAILOVER = "api.high_availability_ha_cluster.failover_high_availability_cluster"
+FEATURE_HA_SWITCHOVER_SPEC = "models.high_availability_switchover_spec"
+FEATURE_JOB_START = "models.job_start_spec"
+FEATURE_JOB_STOP = "models.job_stop_spec"
+FEATURE_JOB_RETRY = "models.job_retry_spec"
+FEATURE_REPOSITORY_RESCAN = "models.repositories_rescan_spec"
+FEATURE_SOBR_EXTENT_MODES = "models.scale_out_extent_maintenance_spec"
+
+ALL_FEATURES = (
+    FEATURE_JOBS,
+    FEATURE_REPOSITORIES,
+    FEATURE_SERVICE,
+    FEATURE_LICENSE,
+    FEATURE_PROXIES,
+    FEATURE_WAN_ACCELERATORS,
+    FEATURE_PROXY_STATES,
+    FEATURE_PROXY_ENABLE,
+    FEATURE_PROXY_DISABLE,
+    FEATURE_HA_CLUSTER,
+    FEATURE_HA_SWITCHOVER,
+    FEATURE_HA_FAILOVER,
+    FEATURE_HA_SWITCHOVER_SPEC,
+    FEATURE_JOB_START,
+    FEATURE_JOB_STOP,
+    FEATURE_JOB_RETRY,
+    FEATURE_REPOSITORY_RESCAN,
+    FEATURE_SOBR_EXTENT_MODES,
+)
+
+
+@functools.cache
 def check_api_feature_availability(api_version: str, feature_path: str) -> bool:
     """Check if a specific API feature (endpoint/spec model) is available in the given API version.
+
+    Cached per (version, feature): the answer cannot change while Home Assistant runs, and
+    find_spec touches the filesystem, which the entity platforms would otherwise repeat on the
+    event loop on every poll. Setup warms the cache from an executor (warm_feature_cache), so
+    the first lookup does not land on the loop either.
 
     Args:
         api_version: The API version to check (e.g., "1.3-rev1")
@@ -131,37 +153,43 @@ def check_api_feature_availability(api_version: str, feature_path: str) -> bool:
         return False
 
 
+def warm_feature_cache(api_version: str) -> None:
+    """Answer every feature question for this version up front. Blocking: run in an executor."""
+    for feature in ALL_FEATURES:
+        check_api_feature_availability(api_version, feature)
+
+
 # API feature requirements mapping
 # This mapping documents which API features (models/endpoints) are required for each entity type.
-# It serves as reference documentation for developers - feature paths are used directly
-# in button.py and sensor.py via check_api_feature_availability() calls.
+# It serves as reference documentation for developers - the FEATURE_* constants above are what
+# the code passes to check_api_feature_availability().
 API_FEATURE_REQUIREMENTS = {
     # Button features
-    "job_start_button": "models.job_start_spec",
-    "job_stop_button": "models.job_stop_spec",
-    "job_retry_button": "models.job_retry_spec",
-    "job_enable_button": "api.jobs",  # Uses enable_job endpoint
-    "job_disable_button": "api.jobs",  # Uses disable_job endpoint
-    "repository_rescan_button": "models.repositories_rescan_spec",
-    "sobr_extent_sealed_mode_button": "models.scale_out_extent_maintenance_spec",
-    "sobr_extent_maintenance_mode_button": "models.scale_out_extent_maintenance_spec",
+    "job_start_button": FEATURE_JOB_START,
+    "job_stop_button": FEATURE_JOB_STOP,
+    "job_retry_button": FEATURE_JOB_RETRY,
+    "job_enable_button": FEATURE_JOBS,  # Uses enable_job endpoint
+    "job_disable_button": FEATURE_JOBS,  # Uses disable_job endpoint
+    "repository_rescan_button": FEATURE_REPOSITORY_RESCAN,
+    "sobr_extent_sealed_mode_button": FEATURE_SOBR_EXTENT_MODES,
+    "sobr_extent_maintenance_mode_button": FEATURE_SOBR_EXTENT_MODES,
     # Data sources (for sensors)
-    "jobs_data": "api.jobs",
-    "repositories_data": "api.repositories",
-    "sobr_data": "api.repositories",  # SOBRs use repositories API
-    "license_data": "api.license_",
-    "server_data": "api.service",
-    "proxy_data": "api.proxies",
+    "jobs_data": FEATURE_JOBS,
+    "repositories_data": FEATURE_REPOSITORIES,
+    "sobr_data": FEATURE_REPOSITORIES,  # SOBRs use repositories API
+    "license_data": FEATURE_LICENSE,
+    "server_data": FEATURE_SERVICE,
+    "proxy_data": FEATURE_PROXIES,
     # Proxy state (online/disabled/out-of-date) and the enable/disable operations:
     # API 1.3-rev0 (VBR 13) and newer only
-    "proxy_state_data": "api.proxies.get_all_proxies_states",
-    "proxy_enable_button": "api.proxies.enable_proxy",
-    "proxy_disable_button": "api.proxies.disable_proxy",
-    "wan_accelerator_data": "api.wan_accelerators",
+    "proxy_state_data": FEATURE_PROXY_STATES,
+    "proxy_enable_button": FEATURE_PROXY_ENABLE,
+    "proxy_disable_button": FEATURE_PROXY_DISABLE,
+    "wan_accelerator_data": FEATURE_WAN_ACCELERATORS,
     # High Availability cluster: API 1.3-rev2 (VBR 13.1) and newer only
-    "ha_cluster_data": "api.high_availability_ha_cluster",
-    "ha_cluster_switchover_button": "models.high_availability_switchover_spec",
-    "ha_cluster_failover_button": "api.high_availability_ha_cluster",
+    "ha_cluster_data": FEATURE_HA_CLUSTER,
+    "ha_cluster_switchover_button": FEATURE_HA_SWITCHOVER,
+    "ha_cluster_failover_button": FEATURE_HA_FAILOVER,
 }
 
 

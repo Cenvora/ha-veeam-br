@@ -27,6 +27,12 @@ absent field: ``to_dict`` skips it and this integration already reads it as None
 else changes — a null was previously an exception, never a value, so no payload that parses
 today parses differently afterwards.
 
+A related shape is handled alongside: an enum value the SDK revision was not generated
+with — a job type or session result added in a later VBR build — raises ``ValueError: 'X'
+is not a valid EJobStatus`` and loses the whole response the same way. Such a value is kept
+as an ``UnknownEnumValue``, a string that also answers ``.value``, so the rest of the
+payload parses and the raw value still reaches the sensor.
+
 Deliberately *not* done: stripping nulls from the payload before parsing. That looks
 simpler but regresses fields that are required and legitimately nullable, such as the four
 progress rates in SessionProgressType0 (nested in JobStateModel), where a null is valid
@@ -78,14 +84,57 @@ def _patch_parsers(module: ModuleType, unset: Any) -> None:
         setattr(module, "isoparse", tolerant_isoparse)
 
     uuid_type = getattr(module, "UUID", None)
-    if uuid_type is not None:
+    if isinstance(uuid_type, type):
+        setattr(module, "UUID", _tolerant_uuid_class(uuid_type, unset))
 
-        def tolerant_uuid(value: Any = None, *args: Any, **kwargs: Any) -> Any:
-            if value is None and not args and not kwargs:
-                return unset
-            return uuid_type(value, *args, **kwargs)
 
-        setattr(module, "UUID", tolerant_uuid)
+class _TolerantUUIDMeta(type):
+    """Metaclass making a stand-in for ``uuid.UUID`` behave like the real class.
+
+    Calling the stand-in parses as UUID does, except that a null reads as absent. The name
+    is also used for ``isinstance(value, UUID)`` in some generated ``to_dict`` methods (for
+    example DiskPartitionModel in 1.3-rev2); a plain function there raises TypeError, so
+    instance and subclass checks are delegated to the real class.
+    """
+
+    _uuid_type: type
+    _unset: Any
+
+    def __call__(cls, value: Any = None, *args: Any, **kwargs: Any) -> Any:
+        if value is None and not args and not kwargs:
+            return cls._unset
+        return cls._uuid_type(value, *args, **kwargs)
+
+    def __instancecheck__(cls, instance: Any) -> bool:
+        return isinstance(instance, cls._uuid_type)
+
+    def __subclasscheck__(cls, subclass: type) -> bool:
+        return issubclass(subclass, cls._uuid_type)
+
+    def __repr__(cls) -> str:
+        return f"<null-tolerant {cls._uuid_type.__name__}>"
+
+
+def _tolerant_uuid_class(uuid_type: type, unset: Any) -> type:
+    """Build the null-tolerant stand-in for one module's UUID binding."""
+    return _TolerantUUIDMeta("UUID", (), {"_uuid_type": uuid_type, "_unset": unset})
+
+
+class UnknownEnumValue(str):
+    """An enum value this SDK revision does not know, kept as the string the server sent.
+
+    Veeam adds enum members between releases — a job type, a repository type, a session
+    result — and the generated code raises ValueError for any value it was not generated
+    with, which loses the whole response over one field. Keeping the raw string lets the
+    rest of the payload through. ``.value`` mirrors an enum member, so code that reads
+    ``member.value`` (including the generated to_dict) keeps working.
+    """
+
+    __slots__ = ()
+
+    @property
+    def value(self) -> str:
+        return str(self)
 
 
 class _NullTolerantEnum:
@@ -97,7 +146,11 @@ class _NullTolerantEnum:
     the second delegated, so the substitution is invisible to the rest of the module.
 
     ``isinstance`` against the name would break, but no generated model module does that —
-    the parsed value is compared against ``Unset``, never against its own enum class.
+    the parsed value is compared against ``Unset``, never against its own enum class. (UUID
+    is different: some modules do check ``isinstance(value, UUID)``, which is why its
+    stand-in is a class; see _TolerantUUIDMeta.)
+
+    A string the enum does not know comes back as an UnknownEnumValue rather than raising.
     """
 
     def __init__(self, enum_class: type[Enum], unset: Any) -> None:
@@ -107,7 +160,18 @@ class _NullTolerantEnum:
     def __call__(self, value: Any = None, *args: Any, **kwargs: Any) -> Any:
         if value is None and not args and not kwargs:
             return self._unset
-        return self._enum_class(value, *args, **kwargs)
+        try:
+            return self._enum_class(value, *args, **kwargs)
+        except ValueError:
+            if args or kwargs or not isinstance(value, str):
+                raise
+            # A value newer than this SDK revision: keep it rather than lose the response
+            _LOGGER.debug(
+                "Unknown %s value %r; keeping it as a plain string",
+                self._enum_class.__name__,
+                value,
+            )
+            return UnknownEnumValue(value)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._enum_class, name)

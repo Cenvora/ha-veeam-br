@@ -1,18 +1,25 @@
 """Common fixtures for Veeam Backup & Replication tests."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import sys
+from unittest.mock import patch
 
 import pytest
 
+# Modules some tests replace with stubs. Left in place, a stub leaks into every later test —
+# and with veeam-br installed, a later import of the real module then fails.
+_STUBBED_MODULES = ("veeam_br", "veeam_br.discovery")
 
-@pytest.fixture(name="mock_veeam_client")
-def mock_veeam_client_fixture():
-    """Mock VeeamClient."""
-    with patch("custom_components.veeam_br.config_flow.VeeamClient") as mock_client:
-        client_instance = MagicMock()
-        client_instance.connect = AsyncMock(return_value=None)
-        mock_client.return_value = client_instance
-        yield mock_client
+
+@pytest.fixture(autouse=True)
+def _restore_stubbed_modules():
+    """Put back any SDK module a test replaced in sys.modules."""
+    saved = {name: sys.modules.get(name) for name in _STUBBED_MODULES}
+    yield
+    for name, module in saved.items():
+        if module is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = module
 
 
 @pytest.fixture(name="mock_setup_entry")
