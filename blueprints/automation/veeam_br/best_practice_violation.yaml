@@ -1,0 +1,58 @@
+blueprint:
+  name: Veeam security best practice violated
+  description: >-
+    Notify when Veeam's Security & Compliance Analyzer finds a security best practice newly in
+    violation — immutability, multi-factor authentication, encryption and the rest.
+
+    Reacts to the integration's `veeam_br_best_practice_violation` event, so there is no
+    entity to pick. Violations already there when Home Assistant starts are not announced, and
+    an analyzer run that finds the same violations again stays quiet; a check that is fixed and
+    later violated again notifies again. The analyzer runs on the server's schedule, or from
+    the Security device's **Run Security Analyzer** button.
+
+    Needs an account with the Backup Administrator or Security Administrator role.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/best_practice_violation.yaml
+  author: Cenvora
+  input:
+    veeam_server:
+      name: Veeam server
+      description: Optional. Only notify about this server; leave empty for every server.
+      default: ""
+      selector:
+        config_entry:
+          integration: veeam_br
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run. Available variables: `practice_name`, `note`, `practice_id`, `entry_id`,
+        `server_name`, and ready-made `title` and `message`.
+      selector:
+        action:
+
+# One analyzer run can put several checks into violation at once
+mode: queued
+max: 25
+
+triggers:
+  - trigger: event
+    event_type: veeam_br_best_practice_violation
+
+variables:
+  veeam_server: !input veeam_server
+  entry_id: "{{ trigger.event.data.entry_id }}"
+  server_name: "{{ config_entry_attr(entry_id, 'title') or '' if entry_id else '' }}"
+  practice_id: "{{ trigger.event.data.id }}"
+  practice_name: "{{ trigger.event.data.name or 'A security best practice' }}"
+  note: "{{ trigger.event.data.note or '' }}"
+  title: "Veeam best practice violated: {{ practice_name }}"
+  message: >-
+    {{ practice_name }} is now in violation
+    {%- if server_name %} on {{ server_name }}{% endif %}.
+    {%- if note %} {{ note }}{% endif %}
+
+conditions:
+  - condition: template
+    value_template: "{{ not veeam_server or entry_id == veeam_server }}"
+
+actions: !input notification_action

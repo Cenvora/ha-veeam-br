@@ -1,0 +1,73 @@
+blueprint:
+  name: Veeam move/copy needs a decision
+  description: >-
+    Notify when a backup move or copy fails part-way and stops to wait for a decision: retry
+    it, detach what failed, or stop and undo it. Until someone chooses, the backup stays where
+    it was.
+
+    Reacts to the integration's `veeam_br_move_copy_action_required` event, so there is no
+    entity to pick. Sessions already waiting when Home Assistant starts are not announced
+    again; the Server device's **Move/Copy Sessions Awaiting Action** sensor lists them all.
+
+    The decision can be made in the Veeam console, or from Home Assistant with the
+    `veeam_br.manage_move_copy_session` action — for example in the notification action below,
+    or a script it starts — passing `config_entry_id: "{{ entry_id }}"`,
+    `session_id: "{{ session_id }}"` and an `action` of `retry`, `forget_failed` or
+    `stop_and_undo`.
+
+    Requires Veeam B&R 13.1, the `1.3-rev2` API version, and an account with the Backup
+    Administrator role.
+  domain: automation
+  source_url: https://github.com/Cenvora/ha-veeam-br/blob/main/blueprints/automation/veeam_br/move_copy_action_required.yaml
+  author: Cenvora
+  input:
+    veeam_server:
+      name: Veeam server
+      description: Optional. Only notify about this server; leave empty for every server.
+      default: ""
+      selector:
+        config_entry:
+          integration: veeam_br
+    notification_action:
+      name: Notification action
+      description: >-
+        What to run. Available variables: `session_id` and `entry_id` (what
+        `veeam_br.manage_move_copy_session` needs), `session_name`, `session_type`,
+        `job_name`, `progress`, `veeam_message` (Veeam's reason), `created`, `server_name`, and
+        ready-made `title` and `message`.
+      selector:
+        action:
+
+mode: queued
+max: 25
+
+triggers:
+  - trigger: event
+    event_type: veeam_br_move_copy_action_required
+
+variables:
+  veeam_server: !input veeam_server
+  entry_id: "{{ trigger.event.data.entry_id }}"
+  server_name: "{{ config_entry_attr(entry_id, 'title') or '' if entry_id else '' }}"
+  session_id: "{{ trigger.event.data.id }}"
+  session_name: "{{ trigger.event.data.name or 'A move/copy session' }}"
+  session_type: "{{ trigger.event.data.type or '' }}"
+  job_name: "{{ trigger.event.data.job_name or '' }}"
+  progress: "{{ trigger.event.data.progress }}"
+  veeam_message: "{{ trigger.event.data.message or '' }}"
+  created: "{{ trigger.event.data.created or '' }}"
+  title: "Veeam move/copy needs a decision: {{ job_name or session_name }}"
+  message: >-
+    {{ session_name }}
+    {%- if job_name and job_name != session_name %} ({{ job_name }}){% endif %}
+    stopped
+    {%- if progress is number %} at {{ progress }}%{% endif %}
+    {%- if server_name %} on {{ server_name }}{% endif %} and is waiting: retry it, detach
+    what failed, or stop and undo it.
+    {%- if veeam_message %} Veeam says: {{ veeam_message }}{% endif %}
+
+conditions:
+  - condition: template
+    value_template: "{{ not veeam_server or entry_id == veeam_server }}"
+
+actions: !input notification_action

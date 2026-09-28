@@ -64,7 +64,7 @@ variables:
       {% if result | lower in ['failed', 'warning'] %}
         {% set ns.items = ns.items + [{
              'name': device_attr(entity_id, 'name_by_user')
-                     or device_attr(entity_id, 'name')
+                     or (device_attr(entity_id, 'name') or '') | regex_replace('^VBR ', '')
                      or entity_id,
              'result': result,
            }] %}
@@ -83,7 +83,7 @@ variables:
     {%- endfor %}
     {%- endif %}
     {%- if unknown_count | int > 0 %}
-    {{ unknown_count }} job(s) reported no result yet.
+    {{ unknown_count }} job(s) reported no result, or could not be read.
     {%- endif %}
 
 conditions:

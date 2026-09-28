@@ -72,11 +72,13 @@ triggers:
 variables:
   ignore_disabled: !input ignore_disabled
   proxy_entity_id: "{{ trigger.entity_id }}"
-  # Each proxy is its own device, so the device name is the proxy name
+  # Each proxy is its own device, named "VBR Proxy <name>" (or "VBR <name>" when the name
+  # already says Proxy, like "VMware Backup Proxy"). The "VBR " prefix is dropped and the kind
+  # kept, so the messages lead with the name; a name the user gave the device is used as-is.
   proxy_name: >-
     {{ device_attr(trigger.entity_id, 'name_by_user')
-       or device_attr(trigger.entity_id, 'name')
-       or trigger.to_state.name | replace(' Online', '') }}
+       or (device_attr(trigger.entity_id, 'name') or '') | regex_replace('^VBR ', '')
+       or trigger.to_state.name | replace(' Online', '') | regex_replace('^VBR ', '') }}
   # The Enabled sensor lives on the same device, so it can be found by walking its entities
   enabled_entity: >-
     {{ device_entities(device_id(trigger.entity_id))
@@ -84,14 +86,14 @@ variables:
   proxy_disabled: >-
     {{ enabled_entity != '' and states(enabled_entity) == 'off' }}
   title: >-
-    {{ 'Veeam proxy offline: ' ~ proxy_name
+    {{ 'Veeam: ' ~ proxy_name ~ ' is offline'
        if trigger.id == 'offline'
-       else 'Veeam proxy back online: ' ~ proxy_name }}
+       else 'Veeam: ' ~ proxy_name ~ ' is back online' }}
   message: >-
-    {{ 'Backup proxy ' ~ proxy_name ~ ' has been offline for a while. Jobs will run on the '
-       ~ 'remaining proxies, which may make them slower.'
+    {{ proxy_name ~ ' has been offline for a while. Jobs will run on the remaining '
+       ~ 'proxies, which may make them slower.'
        if trigger.id == 'offline'
-       else 'Backup proxy ' ~ proxy_name ~ ' is online again.' }}
+       else proxy_name ~ ' is online again.' }}
 
 conditions:
   # A reload takes every entity through unavailable, and both triggers pin from/to, so a
