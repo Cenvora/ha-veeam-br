@@ -2,7 +2,12 @@
 
 Every platform builds the same devices, so their names and identifiers are defined once here.
 Identifiers are unchanged from earlier releases — changing them would orphan every existing
-device.
+device — and only the display names follow the scheme below.
+
+Device names are "VBR <kind> <name>", e.g. "VBR Job Nightly VMs" or "VBR Server vbr01".
+Entities use has_entity_name, so a new entity's ID starts with the device name
+(sensor.vbr_job_nightly_vms_last_result). Existing entities keep the IDs already in the
+registry; only their friendly names change.
 """
 
 from __future__ import annotations
@@ -12,14 +17,17 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 
-from .const import DOMAIN
+from .const import DEVICE_NAME_PREFIX, DOMAIN
 
 MANUFACTURER = "Veeam"
 
 
 def device_name(kind: str, name: str | None) -> str:
-    """Name a device after the object it represents."""
-    return name or kind
+    """Name a device: the prefix, what the device is, then its own name.
+
+    For example "VBR Job Nightly VMs" or "VBR Repository Default Backup Repository".
+    """
+    return " ".join(part for part in (DEVICE_NAME_PREFIX, kind, name) if part)
 
 
 def _device(identifier: str, name: str, model: str) -> dict[str, Any]:
@@ -72,23 +80,30 @@ def wan_device_info(wan_id: str, wan_name: str) -> dict[str, Any]:
 def server_device_info(entry: ConfigEntry, data: dict[str, Any] | None) -> dict[str, Any]:
     return _device(
         f"server_{entry.entry_id}",
-        server_label(entry, data),
+        device_name("Server", server_label(entry, data)),
         "Backup & Replication Server",
     )
 
 
 def license_device_info(entry: ConfigEntry, data: dict[str, Any] | None) -> dict[str, Any]:
-    # Qualified by host: a hardcoded name is indistinguishable once a second server is
-    # added (#82)
-    host = entry.data.get(CONF_HOST, "Unknown")
-    return _device(f"license_{entry.entry_id}", f"Veeam License ({host})", "License")
+    # Named after the server, so a second server's license device is told apart (#82)
+    return _device(
+        f"license_{entry.entry_id}",
+        device_name("License", server_label(entry, data)),
+        "License",
+    )
 
 
 def ha_cluster_device_info(entry: ConfigEntry, data: dict[str, Any] | None) -> dict[str, Any]:
     cluster = (data or {}).get("ha_cluster") or {}
-    name = cluster.get("name") or "HA Cluster"
-    host = entry.data.get(CONF_HOST, "Unknown")
-    return _device(f"ha_cluster_{entry.entry_id}", f"{name} ({host})", "High Availability Cluster")
+    name = cluster.get("name")
+    if not name or name == "HA Cluster":
+        name = server_label(entry, data)
+    return _device(
+        f"ha_cluster_{entry.entry_id}",
+        device_name("HA Cluster", name),
+        "High Availability Cluster",
+    )
 
 
 def endpoint_ok(data: dict[str, Any] | None, key: str) -> bool:
