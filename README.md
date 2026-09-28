@@ -23,6 +23,7 @@ This project is an independent, open source project. It is not affiliated with, 
 - 🎨 **Dynamic Icons**: Visual indicators based on job status (success, running, failed, warning)
 - 📱 **Rich Attributes**: Detailed information including last run, next run, and job type
 - 🔀 **High Availability**: Monitor a clustered server and automate switchover or failover
+- 🛡️ **Malware Detection**: Malware events as sensors and bus events; infected and suspicious objects on VBR 13.1
 
 ## Requirements
 
@@ -159,7 +160,8 @@ The integration creates devices for each monitored object (jobs, repositories, s
 ### Device and entity names
 
 Every device is named `VBR <kind> <name>` — *VBR Job Nightly VMs*, *VBR Server vbr01*,
-*VBR License vbr01*, *VBR SOBR …*, *VBR Proxy …*, *VBR WAN Accelerator …*, *VBR HA Cluster …*.
+*VBR License vbr01*, *VBR SOBR …*, *VBR Proxy …*, *VBR WAN Accelerator …*, *VBR HA Cluster …*,
+*VBR Security vbr01*.
 The kind is left out when the name already says it, so *Default Backup Repository* becomes
 *VBR Default Backup Repository*. Entity names follow the device, so a new install gets entity
 IDs such as `sensor.vbr_job_nightly_vms_last_result` and
@@ -210,6 +212,54 @@ The integration also creates devices for:
   cluster device with online and failover-in-progress sensors, cluster endpoint and last-online
   diagnostics, per-node replication state, Patroni role and replication lag, plus switchover
   and failover buttons. See [High Availability](#high-availability) below.
+- **Security**: malware events on every API version, and on Veeam B&R 13.1 (API `1.3-rev2`)
+  the objects currently marked infected or suspicious. See
+  [Malware Detection](#malware-detection) below.
+
+## Malware Detection
+
+Every server gets a **Security** device fed by Veeam's malware detection: inline and YARA
+scans, antivirus scans, and events marked by an external tool or by hand.
+
+| Entity | API version | Notes |
+| ------ | ----------- | ----- |
+| Last Malware Event | all | When the latest event was detected; machine, severity, type, engine, details and state as attributes |
+| Malware Events (24h) | all | Events created in the last 24 hours, with a `by_severity` breakdown |
+| Infected Objects | `1.3-rev2` | Backed-up objects currently marked infected |
+| Suspicious Objects | `1.3-rev2` | Backed-up objects currently marked suspicious |
+| Malware Detected | `1.3-rev2` | Problem while any object is infected or suspicious; the 25 most recently detected in `objects` |
+
+On `1.2-rev1` and `1.3-rev0` the 24-hour window is by detection time, since those revisions
+cannot filter events on when they were recorded.
+
+The account the integration signs in with needs a role that can read malware events, such as
+Backup Viewer or Security Administrator. Without it the Security entities are unavailable and
+**Health OK** reports a problem; everything else carries on.
+
+### The `veeam_br_malware_event` event
+
+Each event first seen after startup is also fired on the Home Assistant bus, so an automation
+can react to it without polling a sensor. Events already there when Home Assistant starts are
+not fired again. The data carries `entry_id`, `id`, `type`, `severity`, `state`, `source`,
+`machine`, `backup_object_id`, `detection_time`, `creation_time`, `details`, `engine` and
+`created_by`.
+
+```yaml
+automation:
+  - alias: "Veeam malware event"
+    trigger:
+      - platform: event
+        event_type: veeam_br_malware_event
+        event_data:
+          severity: Infected
+    action:
+      - service: notify.notify
+        data:
+          title: "Malware detected on {{ trigger.event.data.machine }}"
+          message: >
+            {{ trigger.event.data.type }} by {{ trigger.event.data.engine }}:
+            {{ trigger.event.data.details }}
+```
 
 ## High Availability
 
@@ -559,6 +609,8 @@ The integration monitors the following Veeam objects:
 - ✅ **WAN Accelerators** - cache configuration
 - ✅ **High Availability Cluster** - cluster state, node roles and replication lag, with
   switchover and failover actions (Veeam B&R 13.1 and the `1.3-rev2` API version)
+- ✅ **Malware Detection** - malware events on every API version; infected and suspicious
+  objects on Veeam B&R 13.1 and the `1.3-rev2` API version
 
 ### Supported Entities
 

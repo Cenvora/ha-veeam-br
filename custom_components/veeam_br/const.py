@@ -75,9 +75,11 @@ UPDATE_TIMEOUT = 240
 # Seconds for logging in, during setup and in the config flow
 CONNECT_TIMEOUT = 60
 
-# Page size for collection endpoints. The 1.3 revisions default to 200 and silently drop
-# anything beyond it, so collections are paged until the reported total is reached.
-PAGE_SIZE = 200
+# Page size for collection endpoints: as many as one request can carry, to keep requests to
+# a minimum. The 1.3 revisions default to 200 and silently drop anything beyond it, and
+# document no maximum; collections are still paged until the reported total is reached, in
+# case a server answers with fewer than asked for.
+PAGE_SIZE = 10000
 
 # Features gated on the API revision, named by the SDK module that provides them. Named once
 # here so the fetch, the entity gating and the pre-imports cannot disagree.
@@ -98,6 +100,9 @@ FEATURE_HA_CLUSTER = "api.high_availability_ha_cluster"
 FEATURE_HA_SWITCHOVER = "api.high_availability_ha_cluster.switchover_high_availability_cluster"
 FEATURE_HA_FAILOVER = "api.high_availability_ha_cluster.failover_high_availability_cluster"
 FEATURE_HA_SWITCHOVER_SPEC = "models.high_availability_switchover_spec"
+# Malware events exist in every revision; detected objects arrive in 1.3-rev2 (VBR 13.1)
+FEATURE_MALWARE_EVENTS = "api.malware_detection.view_suspicious_activity_events"
+FEATURE_MALWARE_OBJECTS = "api.malware_detection.get_malware_detection_objects"
 FEATURE_JOB_START = "models.job_start_spec"
 FEATURE_JOB_STOP = "models.job_stop_spec"
 FEATURE_JOB_RETRY = "models.job_retry_spec"
@@ -118,6 +123,8 @@ ALL_FEATURES = (
     FEATURE_HA_SWITCHOVER,
     FEATURE_HA_FAILOVER,
     FEATURE_HA_SWITCHOVER_SPEC,
+    FEATURE_MALWARE_EVENTS,
+    FEATURE_MALWARE_OBJECTS,
     FEATURE_JOB_START,
     FEATURE_JOB_STOP,
     FEATURE_JOB_RETRY,
@@ -190,6 +197,9 @@ API_FEATURE_REQUIREMENTS = {
     "ha_cluster_data": FEATURE_HA_CLUSTER,
     "ha_cluster_switchover_button": FEATURE_HA_SWITCHOVER,
     "ha_cluster_failover_button": FEATURE_HA_FAILOVER,
+    # Malware detection: events in every revision, detected objects from 1.3-rev2
+    "malware_events_data": FEATURE_MALWARE_EVENTS,
+    "malware_objects_data": FEATURE_MALWARE_OBJECTS,
 }
 
 

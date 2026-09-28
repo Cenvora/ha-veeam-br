@@ -30,6 +30,7 @@ from .entity import (
     license_device_info,
     proxy_device_info,
     repository_device_info,
+    security_device_info,
     server_device_info,
     sobr_device_info,
     wan_device_info,
@@ -57,12 +58,16 @@ async def async_setup_entry(
     server_added = False
     license_added = False
     ha_cluster_added = False
+    malware_events_added = False
+    malware_objects_added = False
 
     @callback
     def _sync_entities() -> None:
         nonlocal server_added
         nonlocal license_added
         nonlocal ha_cluster_added
+        nonlocal malware_events_added
+        nonlocal malware_objects_added
 
         if not coordinator.data:
             return
@@ -246,6 +251,27 @@ async def async_setup_entry(
                 )
             ha_cluster_added = True
             _LOGGER.debug("Adding HA cluster sensors")
+
+        # ---- SECURITY SENSORS (once) - malware events in every revision, detected objects
+        # from 1.3-rev2; both None when the revision does not have them ----
+        if not malware_events_added and coordinator.data.get("malware_events") is not None:
+            new_entities.extend(
+                [
+                    VeeamLastMalwareEventSensor(coordinator, entry),
+                    VeeamRecentMalwareEventsSensor(coordinator, entry),
+                ]
+            )
+            malware_events_added = True
+        if not malware_objects_added and coordinator.data.get("malware_objects") is not None:
+            new_entities.extend(
+                [
+                    VeeamMalwareObjectsSensor(coordinator, entry, "infected", "Infected Objects"),
+                    VeeamMalwareObjectsSensor(
+                        coordinator, entry, "suspicious", "Suspicious Objects"
+                    ),
+                ]
+            )
+            malware_objects_added = True
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam sensors", len(new_entities))
@@ -1592,3 +1618,123 @@ class VeeamWanAcceleratorCacheSensor(VeeamWanAcceleratorMixin, CoordinatorEntity
     @property
     def icon(self) -> str:
         return "mdi:database-clock"
+
+
+# ===========================
+# SECURITY SENSORS (one device per server)
+# ===========================
+
+
+class VeeamSecurityMixin:
+    """Shared by the Security device's entities; ``endpoint`` is the data key each reads."""
+
+    endpoint = "malware_events"
+
+    def __init__(self, coordinator, config_entry):
+        self._config_entry = config_entry
+
+    def _security(self) -> dict[str, Any] | None:
+        return self.coordinator.data.get(self.endpoint) if self.coordinator.data else None
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, self.endpoint)
+            and self._security() is not None
+        )
+
+    @property
+    def device_info(self):
+        return security_device_info(self._config_entry, self.coordinator.data)
+
+
+class VeeamSecurityBaseSensor(VeeamSecurityMixin, CoordinatorEntity, SensorEntity):
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, config_entry):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamSecurityMixin.__init__(self, coordinator, config_entry)
+
+
+class VeeamLastMalwareEventSensor(VeeamSecurityBaseSensor):
+    """When the latest malware event was detected, with what it was about."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_security_last_malware_event"
+        self._attr_name = "Last Malware Event"
+
+    def _event(self) -> dict[str, Any] | None:
+        return (self._security() or {}).get("last_event")
+
+    @property
+    def native_value(self):
+        event = self._event()
+        return event.get("detection_time") if event else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        event = self._event() or {}
+        creation_time = event.get("creation_time")
+        return {
+            "event_id": event.get("id"),
+            "type": event.get("type"),
+            "severity": event.get("severity"),
+            "state": event.get("state"),
+            "source": event.get("source"),
+            "machine": event.get("machine"),
+            "details": event.get("details"),
+            "engine": event.get("engine"),
+            "created_by": event.get("created_by"),
+            "creation_time": creation_time.isoformat() if creation_time else None,
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:shield-bug"
+
+
+class VeeamRecentMalwareEventsSensor(VeeamSecurityBaseSensor):
+    """How many malware events the last 24 hours brought, by severity in the attributes."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:shield-alert-outline"
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_security_malware_events_24h"
+        self._attr_name = "Malware Events (24h)"
+
+    @property
+    def native_value(self) -> int | None:
+        security = self._security()
+        return security.get("recent_count") if security else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"by_severity": (self._security() or {}).get("recent_by_severity") or {}}
+
+
+class VeeamMalwareObjectsSensor(VeeamSecurityBaseSensor):
+    """How many backed-up objects are currently marked Infected, or Suspicious (1.3-rev2)."""
+
+    endpoint = "malware_objects"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry, severity: str, name: str):
+        super().__init__(coordinator, config_entry)
+        self._severity = severity
+        self._attr_unique_id = f"{config_entry.entry_id}_security_{severity}_objects"
+        self._attr_name = name
+
+    @property
+    def native_value(self) -> int | None:
+        security = self._security()
+        return security.get(self._severity) if security else None
+
+    @property
+    def icon(self) -> str:
+        return "mdi:biohazard" if self._severity == "infected" else "mdi:shield-search"
