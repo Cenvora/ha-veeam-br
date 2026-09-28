@@ -513,6 +513,41 @@ Fires when a proxy stays offline, and optionally when it returns. Can ignore pro
 
 <sub>Source: [`proxy_offline.yaml`](blueprints/automation/veeam_br/proxy_offline.yaml)</sub>
 
+### Malware detected
+
+Fires on each new [malware event](#the-veeam_br_malware_event-event), telling infected from suspicious. Choose which severities notify; false positives are skipped by default.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fmalware_detected.yaml)
+
+<sub>Source: [`malware_detected.yaml`](blueprints/automation/veeam_br/malware_detected.yaml)</sub>
+
+### Security best practice violated
+
+Fires when the [Security & Compliance Analyzer](#security--compliance-analyzer) finds a best practice newly in violation.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fbest_practice_violation.yaml)
+
+<sub>Source: [`best_practice_violation.yaml`](blueprints/automation/veeam_br/best_practice_violation.yaml)</sub>
+
+### Recovery appliance connected
+
+Fires when a machine booted from Veeam Recovery Media connects to the server, and says whether it is verified. Needs `1.3-rev2`.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Frecovery_appliance_connected.yaml)
+
+<sub>Source: [`recovery_appliance_connected.yaml`](blueprints/automation/veeam_br/recovery_appliance_connected.yaml)</sub>
+
+### Move/copy needs a decision
+
+Fires when a backup move or copy stops to wait for a retry, detach or undo. Hands your action the `entry_id` and `session_id` that [`veeam_br.manage_move_copy_session`](#the-veeam_brmanage_move_copy_session-action) needs. Needs `1.3-rev2`.
+
+[![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fraw.githubusercontent.com%2FCenvora%2Fha-veeam-br%2Fmain%2Fblueprints%2Fautomation%2Fveeam_br%2Fmove_copy_action_required.yaml)
+
+<sub>Source: [`move_copy_action_required.yaml`](blueprints/automation/veeam_br/move_copy_action_required.yaml)</sub>
+
+The four above react to the integration's bus events rather than to an entity, so there is
+nothing to pick; each can be limited to one Veeam server when you run several.
+
 ### A note on which sensor to pick
 
 For job automations, use the **Last Result** sensor, not **Status**. Status reports what the

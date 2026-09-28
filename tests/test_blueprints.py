@@ -1,14 +1,16 @@
 """Validation for the shipped automation blueprints.
 
-Home Assistant is not installed in this environment, so these tests check the things that
-actually break a blueprint in the wild and that no YAML linter would catch: an `!input` that
-was never declared, a declared input nothing uses (a UI field that does nothing), a
-`source_url` that does not match where the file really lives (which breaks the import link),
-and selectors pointing at a different integration.
+These need no Home Assistant, and check the things that actually break a blueprint in the
+wild and that no YAML linter would catch: an `!input` that was never declared, a declared input
+nothing uses (a UI field that does nothing), a `source_url` that does not match where the file
+really lives (which breaks the import link), selectors pointing at a different integration,
+and an event trigger listening for an event the integration never fires.
+test_blueprint_behaviour.py runs them in Home Assistant.
 """
 
 import json
 from pathlib import Path
+import re
 
 import pytest
 import yaml
@@ -232,3 +234,94 @@ def test_state_triggers_that_pin_from_are_left_alone():
 
     assert 'from: "off"' in text and 'to: "on"' in text
     assert 'from: "on"' in text and 'to: "off"' in text
+
+
+def fired_events():
+    """Every EVENT_* the integration defines, read from its source."""
+    events = set()
+    for source in (REPO / "custom_components" / "veeam_br").glob("*.py"):
+        text = source.read_text(encoding="utf-8")
+        events.update(re.findall(r'^EVENT_\w+ = "(veeam_br_\w+)"', text, re.MULTILINE))
+    return events
+
+
+def event_triggers(document):
+    return [t for t in document["triggers"] if t.get("trigger") == "event"]
+
+
+def event_blueprints():
+    return [path for path in blueprint_files() if event_triggers(load(path))]
+
+
+def test_every_event_the_integration_fires_has_a_blueprint():
+    """Each bus event is there to be automated on; one without a blueprint is easy to miss."""
+    events = fired_events()
+    assert events, "no EVENT_ constants found — have they moved?"
+
+    handled = {
+        trigger["event_type"]
+        for path in event_blueprints()
+        for trigger in event_triggers(load(path))
+    }
+    assert events <= handled, f"no blueprint for {sorted(events - handled)}"
+
+
+@pytest.mark.parametrize("path", event_blueprints(), ids=lambda p: p.name)
+def test_event_triggers_listen_for_an_event_the_integration_fires(path):
+    """A misspelled event_type is a blueprint that silently never runs."""
+    for trigger in event_triggers(load(path)):
+        assert trigger["event_type"] in fired_events(), trigger["event_type"]
+
+
+@pytest.mark.parametrize("path", event_blueprints(), ids=lambda p: p.name)
+def test_event_blueprints_can_be_limited_to_one_server(path):
+    """Every event carries entry_id; with several servers, users want to pick one."""
+    document = load(path)
+    server = document["blueprint"]["input"].get("veeam_server")
+
+    assert server, "should offer a veeam_server input"
+    assert server.get("default") == "", "leaving it empty should mean every server"
+    assert "config_entry" in server["selector"]
+    conditions = json.dumps(document.get("conditions", []))
+    assert "entry_id == veeam_server" in conditions, "the input should filter on entry_id"
+
+
+@pytest.mark.parametrize("path", blueprint_files(), ids=lambda p: p.name)
+def test_config_entry_selectors_target_this_integration(path):
+    """An unfiltered config entry selector lists every integration's entries."""
+    document = load(path)
+
+    for name, spec in document["blueprint"]["input"].items():
+        selector = spec.get("selector", {})
+        if "config_entry" in selector:
+            assert (selector["config_entry"] or {}).get("integration") == "veeam_br", name
+
+
+@pytest.mark.parametrize("path", blueprint_files(), ids=lambda p: p.name)
+def test_device_names_drop_the_vbr_prefix(path):
+    """Devices are named "VBR <kind> <name>"; "Veeam backup failed: VBR Job ..." reads badly.
+
+    Only the device's own name is stripped: a name the user gave it is theirs.
+    """
+    text = path.read_text(encoding="utf-8")
+    for match in re.finditer(r"device_attr\([^)]*'name'\)[^\n]*", text):
+        assert "regex_replace('^VBR ', '')" in match.group(0), match.group(0)
+
+
+def test_malware_blueprint_tells_infected_from_suspicious():
+    document = load(BLUEPRINT_DIR / "malware_detected.yaml")
+    severities = document["blueprint"]["input"]["severities"]
+
+    assert severities["default"] == ["Infected", "Suspicious"]
+    options = {option["value"] for option in severities["selector"]["select"]["options"]}
+    # ESuspiciousActivitySeverity, 1.3-rev2 (a superset of the earlier revisions)
+    assert options == {"Infected", "Suspicious", "Informative", "Clean"}
+    assert "infected" in document["variables"]
+
+
+def test_move_copy_blueprint_points_at_the_action():
+    """The event is only half the story; settling the session is the action's job."""
+    document = load(BLUEPRINT_DIR / "move_copy_action_required.yaml")
+
+    assert "veeam_br.manage_move_copy_session" in document["blueprint"]["description"]
+    assert {"entry_id", "session_id"} <= set(document["variables"])
