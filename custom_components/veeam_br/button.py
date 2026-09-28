@@ -28,19 +28,23 @@ from .const import (
     FEATURE_PROXY_DISABLE,
     FEATURE_PROXY_ENABLE,
     FEATURE_REPOSITORY_RESCAN,
+    FEATURE_SECURITY_ANALYZER_START,
     FEATURE_SOBR_EXTENT_MODES,
     check_api_feature_availability,
     configured_api_version,
 )
 from .display import describe_error
 from .entity import (
+    endpoint_ok,
     ha_cluster_device_info,
     job_device_info,
     proxy_device_info,
     repository_device_info,
+    security_device_info,
     sobr_device_info,
 )
 from .pruning import forget_missing, reported_extent_ids, reported_ids
+from .security_analyzer import is_running
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -133,10 +137,12 @@ async def async_setup_entry(
     added_job_ids: set[str] = set()
     added_proxy_ids: set[str] = set()
     ha_cluster_added = False
+    security_analyzer_added = False
 
     @callback
     def _sync_entities() -> None:
         nonlocal ha_cluster_added
+        nonlocal security_analyzer_added
 
         if not coordinator.data:
             return
@@ -269,6 +275,14 @@ async def async_setup_entry(
             )
             ha_cluster_added = True
             _LOGGER.debug("Adding HA cluster buttons")
+
+        if (
+            not security_analyzer_added
+            and coordinator.data.get("security_analyzer") is not None
+            and check_api_feature_availability(api_version, FEATURE_SECURITY_ANALYZER_START)
+        ):
+            new_entities.append(VeeamRunSecurityAnalyzerButton(coordinator, entry, veeam_client))
+            security_analyzer_added = True
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam buttons", len(new_entities))
@@ -838,3 +852,45 @@ class VeeamProxyDisableButton(VeeamProxyButtonBase):
     async def async_press(self) -> None:
         """Handle the button press to disable the proxy."""
         await self._call("disable_proxy", "disable")
+
+
+# ===========================
+# SECURITY & COMPLIANCE ANALYZER BUTTON
+# ===========================
+
+
+class VeeamRunSecurityAnalyzerButton(VeeamButtonBase):
+    """Start the Security & Compliance Analyzer now, rather than on its schedule."""
+
+    def __init__(self, coordinator, config_entry, veeam_client):
+        super().__init__(coordinator, config_entry, veeam_client)
+        self._attr_unique_id = f"{config_entry.entry_id}_security_run_analyzer"
+        self._attr_name = "Run Security Analyzer"
+
+    def _analyzer(self) -> dict | None:
+        return self.coordinator.data.get("security_analyzer") if self.coordinator.data else None
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while a run is already in progress."""
+        analyzer = self._analyzer()
+        if analyzer is None:
+            return False
+        return (
+            super().available
+            and endpoint_ok(self.coordinator.data, "security_analyzer")
+            and not is_running(analyzer.get("last_run"))
+        )
+
+    @property
+    def device_info(self):
+        return security_device_info(self._config_entry, self.coordinator.data)
+
+    @property
+    def icon(self) -> str:
+        return "mdi:shield-search"
+
+    async def async_press(self) -> None:
+        await self._async_run(
+            "security", "start_security_analyzer", "run", "the Security & Compliance Analyzer"
+        )

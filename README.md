@@ -217,7 +217,8 @@ The integration also creates devices for:
   and failover buttons. See [High Availability](#high-availability) below.
 - **Security**: malware events on every API version, and on Veeam B&R 13.1 (API `1.3-rev2`)
   the objects currently marked infected or suspicious. See
-  [Malware Detection](#malware-detection) below.
+  [Malware Detection](#malware-detection) below. It also carries the
+  [Security & Compliance Analyzer](#security--compliance-analyzer).
 
 ## Malware Detection
 
@@ -262,6 +263,42 @@ automation:
           message: >
             {{ trigger.event.data.type }} by {{ trigger.event.data.engine }}:
             {{ trigger.event.data.details }}
+```
+
+## Security & Compliance Analyzer
+
+Veeam's Security & Compliance Analyzer checks the backup server against Veeam's security
+best practices: immutable backups, multi-factor authentication, encryption and the rest. Every
+API version has it, and its results go on the **Security** device.
+
+| Entity | Notes |
+| ------ | ----- |
+| Best Practice Violations | How many checks are in violation; `violating` lists them with any note, and `by_status` counts every status |
+| Best Practices | Problem while any check is in violation |
+| Last Analyzer Run | When the last run finished, or started if one is running; state, result, message and who started it as attributes |
+| Run Security Analyzer | Starts a run now instead of waiting for the schedule; unavailable while one is running |
+
+A check that falls into violation after Home Assistant starts fires a
+`veeam_br_best_practice_violation` event, with `entry_id`, `id`, `name` and `note`. A new run
+that finds the same violations again does not fire it again. A check that is fixed and later
+violated again does.
+
+The server shows these only to the **Backup Administrator** and **Security Administrator**
+roles. With any other role, these entities are not created, and after one refused request
+(logged once) the integration stops asking until it is reloaded. That is not reported as a
+failure.
+
+```yaml
+automation:
+  - alias: "Veeam best practice violated"
+    trigger:
+      - platform: event
+        event_type: veeam_br_best_practice_violation
+    action:
+      - service: notify.notify
+        data:
+          title: "Veeam security best practice violated"
+          message: "{{ trigger.event.data.name }}"
 ```
 
 ## Move/Copy Sessions Awaiting Action
@@ -708,6 +745,8 @@ The integration monitors the following Veeam objects:
   stop and undo (Veeam B&R 13.1 and the `1.3-rev2` API version, Backup Administrator role)
 - ✅ **Recovery Appliances** - connected Veeam Recovery Media machines, and an event when one
   connects (Veeam B&R 13.1 and the `1.3-rev2` API version)
+- ✅ **Security & Compliance Analyzer** - best practice violations, the last run, and
+  starting a run (every API version; Backup or Security Administrator role)
 - ✅ **Malware Detection** - malware events on every API version; infected and suspicious
   objects on Veeam B&R 13.1 and the `1.3-rev2` API version
 

@@ -39,6 +39,9 @@ from .const import (
     FEATURE_MOVE_COPY_SESSIONS,
     FEATURE_PROXY_STATES,
     FEATURE_RECOVERY_APPLIANCES,
+    FEATURE_SECURITY_ANALYZER,
+    FEATURE_SECURITY_ANALYZER_LAST_RUN,
+    FEATURE_SECURITY_ANALYZER_START,
     PAGE_LIMIT,
     REQUEST_TIMEOUT,
     UPDATE_INTERVAL,
@@ -63,6 +66,13 @@ from .move_copy import EVENT_MOVE_COPY, parse_session, summarize_sessions
 from .pruning import async_prune_stale
 from .recovery_appliances import EVENT_RECOVERY_APPLIANCE, parse_appliance, summarize_appliances
 from .sdk_patches import patch_models as patch_null_values_in_models
+from .security_analyzer import (
+    EVENT_BEST_PRACTICE_VIOLATION,
+    ViolationTracker,
+    parse_best_practice,
+    parse_last_run,
+    summarize as summarize_security_analyzer,
+)
 from .services import async_setup_services
 from .tracking import NewItemTracker, with_iso_times
 
@@ -96,6 +106,7 @@ ENDPOINT_LABELS = {
     "malware_objects": "malware detection objects",
     "move_copy_sessions": "move/copy sessions awaiting action",
     "recovery_appliances": "recovery appliances",
+    "security_analyzer": "Security & Compliance Analyzer results",
 }
 
 # Repository types that have no immutability of their own. Their Immutable sensor reads
@@ -110,6 +121,17 @@ class UnexpectedResponseError(Exception):
     The generated clients return an Error model for a documented failure and None for an
     undocumented status rather than raising, so without this those read as an empty list.
     """
+
+
+def _refused_by_role(result: Any) -> bool:
+    """Whether an Error model is the server refusing this account's role (HTTP 403)."""
+    extras = getattr(result, "additional_properties", None) or {}
+    return isinstance(extras, dict) and extras.get("status") == 403
+
+
+def _not_found(result: Any) -> bool:
+    extras = getattr(result, "additional_properties", None) or {}
+    return isinstance(extras, dict) and extras.get("status") == 404
 
 
 def _describe_response(result: Any) -> str:
@@ -586,6 +608,9 @@ def _prepare_sdk(api_version: str, api_module: str) -> Any:
         FEATURE_MOVE_COPY_SESSIONS,
         FEATURE_MANAGE_MOVE_COPY,
         FEATURE_RECOVERY_APPLIANCES,
+        FEATURE_SECURITY_ANALYZER,
+        FEATURE_SECURITY_ANALYZER_LAST_RUN,
+        FEATURE_SECURITY_ANALYZER_START,
     ):
         if check_api_feature_availability(api_version, feature):
             modules.append(f"{package}.{feature}")
@@ -692,6 +717,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         api_version, FEATURE_RECOVERY_APPLIANCES
     )
     recovery_appliance_tracker = NewItemTracker()
+
+    security_analyzer_supported = check_api_feature_availability(
+        api_version, FEATURE_SECURITY_ANALYZER
+    ) and check_api_feature_availability(api_version, FEATURE_SECURITY_ANALYZER_LAST_RUN)
+    violation_tracker = ViolationTracker()
+    # Cleared when the server refuses the account (Backup or Security Administrator only)
+    security_analyzer_permitted = True
 
     proxy_states_supported = check_api_feature_availability(api_version, FEATURE_PROXY_STATES)
     proxies_endpoint = "get_all_proxies_states" if proxy_states_supported else "get_all_proxies"
@@ -1300,8 +1332,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         backups_api = veeam_client.api("backups")
         result = await veeam_client.call(backups_api.get_move_copy_sessions)
         if not isinstance(result, list):
-            extras = getattr(result, "additional_properties", None) or {}
-            if isinstance(extras, dict) and extras.get("status") == 403:
+            if _refused_by_role(result):
                 move_copy_permitted = False
                 _LOGGER.info(
                     "Not monitoring move/copy sessions awaiting action on %s: the server "
@@ -1355,6 +1386,59 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 {"entry_id": entry.entry_id, **with_iso_times(appliance)},
             )
         return summarize_appliances(appliances)
+
+    async def fetch_security_analyzer() -> dict | None:
+        """Best practice checks and the analyzer's last run; None if the account may not ask."""
+        nonlocal security_analyzer_permitted
+        security_api = veeam_client.api("security")
+        result = await veeam_client.call(security_api.get_best_practices_compliance_result)
+        items = getattr(result, "items", None)
+        if not isinstance(items, list):
+            if _refused_by_role(result):
+                security_analyzer_permitted = False
+                _LOGGER.info(
+                    "Not monitoring the Security & Compliance Analyzer on %s: the server "
+                    "allows that to the Backup Administrator and Security Administrator "
+                    "roles only. Reload the integration after changing the account's role",
+                    host,
+                )
+                return None
+            raise UnexpectedResponseError(
+                f"best practices endpoint answered {_describe_response(result)}"
+            )
+
+        practices = []
+        for item in items:
+            try:
+                parsed = parse_best_practice(item, get_enum_value, get_uuid_value)
+            except (ValueError, KeyError, AttributeError, TypeError) as err:
+                _LOGGER.warning("Failed to parse a best practice: %s", describe_error(err))
+                continue
+            if parsed is not None:
+                practices.append(parsed)
+
+        session = await veeam_client.call(security_api.get_security_analyzer_session)
+        if _not_found(session):
+            # The analyzer has never run
+            last_run = None
+        elif session is None or hasattr(session, "error_code"):
+            raise UnexpectedResponseError(
+                f"analyzer last run endpoint answered {_describe_response(session)}"
+            )
+        else:
+            last_run = parse_last_run(session, get_enum_value, get_datetime_value)
+
+        for practice in violation_tracker.update(practices):
+            hass.bus.async_fire(
+                EVENT_BEST_PRACTICE_VIOLATION,
+                {
+                    "entry_id": entry.entry_id,
+                    "id": practice["id"],
+                    "name": practice["name"],
+                    "note": practice["note"],
+                },
+            )
+        return summarize_security_analyzer(practices, last_run)
 
     async def fetch_malware_objects() -> dict:
         """The objects currently marked Infected or Suspicious (1.3-rev2)."""
@@ -1426,6 +1510,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             recovery_appliances = await run("recovery_appliances", fetch_recovery_appliances, None)
         else:
             recovery_appliances, fetch_ok["recovery_appliances"] = None, True
+        if security_analyzer_supported and security_analyzer_permitted:
+            security_analyzer = await run("security_analyzer", fetch_security_analyzer, None)
+        else:
+            security_analyzer, fetch_ok["security_analyzer"] = None, True
 
         if isinstance(repositories_result, tuple):
             repositories, fetch_ok["repository_states"] = repositories_result
@@ -1458,6 +1546,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "malware_objects": malware_objects,
             "move_copy_sessions": move_copy_sessions,
             "recovery_appliances": recovery_appliances,
+            "security_analyzer": security_analyzer,
             "fetch_ok": fetch_ok,
             "diagnostics": {
                 "connected": True,
