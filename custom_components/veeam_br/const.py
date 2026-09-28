@@ -108,6 +108,10 @@ FEATURE_MOVE_COPY_SESSIONS = "api.backups.get_move_copy_sessions"
 FEATURE_MANAGE_MOVE_COPY = "api.backups.manage_move_copy_session"
 # Agent recovery appliances: 1.3-rev2 (VBR 13.1)
 FEATURE_RECOVERY_APPLIANCES = "api.agents.get_agents_recovery_appliances"
+# Security & Compliance Analyzer: every revision
+FEATURE_SECURITY_ANALYZER = "api.security.get_best_practices_compliance_result"
+FEATURE_SECURITY_ANALYZER_LAST_RUN = "api.security.get_security_analyzer_session"
+FEATURE_SECURITY_ANALYZER_START = "api.security.start_security_analyzer"
 FEATURE_JOB_START = "models.job_start_spec"
 FEATURE_JOB_STOP = "models.job_stop_spec"
 FEATURE_JOB_RETRY = "models.job_retry_spec"
@@ -133,6 +137,9 @@ ALL_FEATURES = (
     FEATURE_MOVE_COPY_SESSIONS,
     FEATURE_MANAGE_MOVE_COPY,
     FEATURE_RECOVERY_APPLIANCES,
+    FEATURE_SECURITY_ANALYZER,
+    FEATURE_SECURITY_ANALYZER_LAST_RUN,
+    FEATURE_SECURITY_ANALYZER_START,
     FEATURE_JOB_START,
     FEATURE_JOB_STOP,
     FEATURE_JOB_RETRY,

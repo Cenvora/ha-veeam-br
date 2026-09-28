@@ -157,6 +157,9 @@ class FakeServer:
             ("malware_detection", "get_malware_detection_objects"): paged([]),
             ("backups", "get_move_copy_sessions"): [],
             ("agents", "get_agents_recovery_appliances"): paged([]),
+            ("security", "get_best_practices_compliance_result"): SimpleNamespace(items=[]),
+            # Never run: the server answers 404
+            ("security", "get_security_analyzer_session"): error(404, "No session", "NotFound"),
         }
 
     def handle(self, namespace: str, operation: str, kwargs: dict) -> Any:

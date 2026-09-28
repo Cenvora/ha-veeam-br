@@ -82,6 +82,7 @@ async def async_setup_entry(
     license_added = False
     ha_cluster_added = False
     malware_detected_added = False
+    best_practices_added = False
 
     @callback
     def _sync_entities() -> None:
@@ -89,6 +90,7 @@ async def async_setup_entry(
         nonlocal license_added
         nonlocal ha_cluster_added
         nonlocal malware_detected_added
+        nonlocal best_practices_added
 
         if not coordinator.data:
             return
@@ -176,6 +178,9 @@ async def async_setup_entry(
         if not malware_detected_added and coordinator.data.get("malware_objects") is not None:
             new_entities.append(VeeamMalwareDetectedSensor(coordinator, entry))
             malware_detected_added = True
+        if not best_practices_added and coordinator.data.get("security_analyzer") is not None:
+            new_entities.append(VeeamBestPracticesSensor(coordinator, entry))
+            best_practices_added = True
 
         if new_entities:
             _drop_superseded_sensor_entities(hass, entry, new_entities)
@@ -705,6 +710,34 @@ class VeeamMalwareDetectedSensor(VeeamSecurityMixin, CoordinatorEntity, BinarySe
             "suspicious": security.get("suspicious"),
             "objects": security.get("objects") or [],
         }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:shield-alert" if self.is_on else "mdi:shield-check"
+
+
+class VeeamBestPracticesSensor(VeeamSecurityMixin, CoordinatorEntity, BinarySensorEntity):
+    """Problem while the Security & Compliance Analyzer reports any best practice violated."""
+
+    endpoint = "security_analyzer"
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator, config_entry):
+        CoordinatorEntity.__init__(self, coordinator)
+        VeeamSecurityMixin.__init__(self, coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_security_best_practices"
+        self._attr_name = "Best Practices"
+
+    @property
+    def is_on(self) -> bool | None:
+        analyzer = self._security()
+        return bool(analyzer.get("violations")) if analyzer else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analyzer = self._security() or {}
+        return {"violating": [p.get("name") for p in analyzer.get("violating") or []]}
 
     @property
     def icon(self) -> str:

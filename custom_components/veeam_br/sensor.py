@@ -36,6 +36,7 @@ from .entity import (
     wan_device_info,
 )
 from .pruning import forget_missing, reported_ids
+from .security_analyzer import last_run_attributes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ async def async_setup_entry(
     malware_objects_added = False
     move_copy_added = False
     recovery_appliances_added = False
+    security_analyzer_added = False
 
     @callback
     def _sync_entities() -> None:
@@ -72,6 +74,7 @@ async def async_setup_entry(
         nonlocal malware_objects_added
         nonlocal move_copy_added
         nonlocal recovery_appliances_added
+        nonlocal security_analyzer_added
 
         if not coordinator.data:
             return
@@ -287,6 +290,15 @@ async def async_setup_entry(
         ):
             new_entities.append(VeeamRecoveryAppliancesSensor(coordinator, entry))
             recovery_appliances_added = True
+        # Every revision, for an account the server lets ask: None otherwise
+        if not security_analyzer_added and coordinator.data.get("security_analyzer") is not None:
+            new_entities.extend(
+                [
+                    VeeamBestPracticeViolationsSensor(coordinator, entry),
+                    VeeamLastAnalyzerRunSensor(coordinator, entry),
+                ]
+            )
+            security_analyzer_added = True
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam sensors", len(new_entities))
@@ -1842,3 +1854,64 @@ class VeeamRecoveryAppliancesSensor(VeeamServerBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:lifebuoy"
+
+
+# ===========================
+# SECURITY & COMPLIANCE ANALYZER (security device, every revision)
+# ===========================
+
+
+class VeeamBestPracticeViolationsSensor(VeeamSecurityBaseSensor):
+    """How many best practices the analyzer found violated, and which."""
+
+    endpoint = "security_analyzer"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_security_best_practice_violations"
+        self._attr_name = "Best Practice Violations"
+
+    @property
+    def native_value(self) -> int | None:
+        analyzer = self._security()
+        return analyzer.get("violations") if analyzer else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        analyzer = self._security() or {}
+        return {
+            "violating": analyzer.get("violating") or [],
+            "by_status": analyzer.get("counts") or {},
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:shield-alert" if self.native_value else "mdi:shield-check"
+
+
+class VeeamLastAnalyzerRunSensor(VeeamSecurityBaseSensor):
+    """When the Security & Compliance Analyzer last finished, or started if still running."""
+
+    endpoint = "security_analyzer"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:clipboard-check-outline"
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_security_last_analyzer_run"
+        self._attr_name = "Last Analyzer Run"
+
+    def _last_run(self) -> dict[str, Any] | None:
+        return (self._security() or {}).get("last_run")
+
+    @property
+    def native_value(self):
+        last_run = self._last_run()
+        if not last_run:
+            return None
+        return last_run.get("ended") or last_run.get("started")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return last_run_attributes(self._last_run())
