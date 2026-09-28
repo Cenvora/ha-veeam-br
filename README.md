@@ -201,7 +201,8 @@ The integration also creates devices for:
 - **Scale-Out Backup Repositories (SOBRs)**: Each SOBR device has sensors for description, extent count, and buttons for each extent to enable/disable sealed mode and maintenance mode.
 - **Server**: Server device has sensors for build version, platform, database info, etc. On
   Veeam B&R 13.1 (API `1.3-rev2`) it also counts backup moves and copies awaiting a decision;
-  see [Move/Copy Sessions Awaiting Action](#movecopy-sessions-awaiting-action).
+  see [Move/Copy Sessions Awaiting Action](#movecopy-sessions-awaiting-action). It also counts
+  connected recovery appliances; see [Recovery Appliances](#recovery-appliances).
 - **License**: License device has sensors for status, edition, expiration dates, and — on
   instance-based licences — instances licensed, instances used and percentage used, with the
   per-workload-type breakdown as attributes.
@@ -318,6 +319,41 @@ automation:
           config_entry_id: "{{ trigger.event.data.entry_id }}"
           session_id: "{{ trigger.event.data.id }}"
           action: retry
+```
+
+## Recovery Appliances
+
+A recovery appliance is a machine booted from Veeam Recovery Media that connects to the
+backup server to restore from it, usually for a bare-metal recovery. On Veeam B&R 13.1 (API
+`1.3-rev2`) the **Server** device's **Recovery Appliances Connected** sensor counts them.
+
+| Attribute | Meaning |
+| --------- | ------- |
+| `disconnected` | Appliances the server still knows but that are no longer connected |
+| `unverified` | Connected appliances not yet verified on the backup server |
+| `appliances` | Each one, connected first, then by last contact: host, verified, endpoint, addresses, agent version, platform, connected since, last contact |
+
+The verification phrase each appliance shows is left out on purpose. It is how an
+administrator confirms that an appliance is the machine in front of them, and does not belong
+in Home Assistant's history.
+
+When an appliance connects after Home Assistant starts, a `veeam_br_recovery_appliance_connected`
+event fires with the same fields plus `entry_id`. It fires again if the appliance disconnects and
+reconnects. On most servers this is rare, so it is worth a notification:
+
+```yaml
+automation:
+  - alias: "Veeam recovery appliance connected"
+    trigger:
+      - platform: event
+        event_type: veeam_br_recovery_appliance_connected
+    action:
+      - service: notify.notify
+        data:
+          title: "Recovery appliance connected to Veeam"
+          message: >
+            {{ trigger.event.data.host }} ({{ trigger.event.data.endpoint }}),
+            {{ 'verified' if trigger.event.data.verified else 'NOT verified' }}
 ```
 
 ## High Availability
@@ -670,6 +706,8 @@ The integration monitors the following Veeam objects:
   switchover and failover actions (Veeam B&R 13.1 and the `1.3-rev2` API version)
 - ✅ **Move/Copy Sessions Awaiting Action** - count, details, and retry / detach failed /
   stop and undo (Veeam B&R 13.1 and the `1.3-rev2` API version, Backup Administrator role)
+- ✅ **Recovery Appliances** - connected Veeam Recovery Media machines, and an event when one
+  connects (Veeam B&R 13.1 and the `1.3-rev2` API version)
 - ✅ **Malware Detection** - malware events on every API version; infected and suspicious
   objects on Veeam B&R 13.1 and the `1.3-rev2` API version
 

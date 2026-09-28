@@ -61,6 +61,7 @@ async def async_setup_entry(
     malware_events_added = False
     malware_objects_added = False
     move_copy_added = False
+    recovery_appliances_added = False
 
     @callback
     def _sync_entities() -> None:
@@ -70,6 +71,7 @@ async def async_setup_entry(
         nonlocal malware_events_added
         nonlocal malware_objects_added
         nonlocal move_copy_added
+        nonlocal recovery_appliances_added
 
         if not coordinator.data:
             return
@@ -279,6 +281,12 @@ async def async_setup_entry(
         if not move_copy_added and coordinator.data.get("move_copy_sessions") is not None:
             new_entities.append(VeeamMoveCopySessionsSensor(coordinator, entry))
             move_copy_added = True
+        if (
+            not recovery_appliances_added
+            and coordinator.data.get("recovery_appliances") is not None
+        ):
+            new_entities.append(VeeamRecoveryAppliancesSensor(coordinator, entry))
+            recovery_appliances_added = True
 
         if new_entities:
             _LOGGER.debug("Adding %d Veeam sensors", len(new_entities))
@@ -1789,3 +1797,48 @@ class VeeamMoveCopySessionsSensor(VeeamServerBaseSensor):
     @property
     def icon(self) -> str:
         return "mdi:swap-horizontal-circle" if self.native_value else "mdi:swap-horizontal"
+
+
+# ===========================
+# RECOVERY APPLIANCES (server device, 1.3-rev2)
+# ===========================
+
+
+class VeeamRecoveryAppliancesSensor(VeeamServerBaseSensor):
+    """How many agent recovery appliances are connected, with every known one listed."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator, config_entry):
+        super().__init__(coordinator, config_entry)
+        self._attr_unique_id = f"{config_entry.entry_id}_server_recovery_appliances"
+        self._attr_name = "Recovery Appliances Connected"
+
+    def _appliances(self) -> dict[str, Any] | None:
+        return self.coordinator.data.get("recovery_appliances") if self.coordinator.data else None
+
+    @property
+    def available(self) -> bool:
+        return (
+            CoordinatorEntity.available.fget(self)
+            and endpoint_ok(self.coordinator.data, "recovery_appliances")
+            and self._appliances() is not None
+        )
+
+    @property
+    def native_value(self) -> int | None:
+        appliances = self._appliances()
+        return appliances.get("connected") if appliances else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        appliances = self._appliances() or {}
+        return {
+            "disconnected": appliances.get("disconnected"),
+            "unverified": appliances.get("unverified"),
+            "appliances": appliances.get("appliances") or [],
+        }
+
+    @property
+    def icon(self) -> str:
+        return "mdi:lifebuoy"
