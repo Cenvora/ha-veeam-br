@@ -25,6 +25,32 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install ruff ty
+          pip install -r requirements_test.txt
+
+      - name: Format check with Ruff
+        run: ruff format --check custom_components/
+
+      - name: Lint with Ruff
+        run: ruff check custom_components/
+
+      - name: Type check with ty
+        run: ty check custom_components/
+
+    name: Python Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
           pip install black flake8 isort mypy
 
       - name: Check Python formatting with Black
