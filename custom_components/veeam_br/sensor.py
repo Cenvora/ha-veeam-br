@@ -381,7 +381,9 @@ class VeeamRepositoryMixin:
     @property
     def available(self) -> bool:
         """Unavailable, rather than unknown, when there is nothing current to show."""
-        if not CoordinatorEntity.available.fget(self) or not endpoint_ok(self.coordinator.data, "repositories"):
+        if not CoordinatorEntity.available.fget(self) or not endpoint_ok(
+            self.coordinator.data, "repositories"
+        ):
             return False
         repo = self._repository()
         if repo is None:
