@@ -314,6 +314,14 @@
     "unsupported_license": {
       "title": "{host} 上的 Veeam 许可证不受支持",
       "description": "位于 **{host}** 的 Veeam Backup & Replication 服务器报告的许可证为 **{license}**。\n\n此集成不支持 Veeam Community Edition 以及未安装许可证的服务器：授权范围不同，部分 REST API 端点的响应方式不同或根本不响应，因此实体可能缺失或不可靠。\n\n集成会继续运行，不会阻止任何功能。如果遇到问题，请在错误报告中注明此许可证版本。安装受支持的许可证或移除此集成即可清除此警告。"
+    },
+    "license_expiring": {
+      "title": "{host} 上的 Veeam 许可证即将到期",
+      "description": "**{host}** 上的 Veeam Backup & Replication 许可证将于 {date} 到期，还剩 {days} 天。到期后，一旦您的许可证类型允许的宽限期结束，备份作业将停止处理新数据。\n\n请在 Veeam Backup & Replication 控制台中安装续订的许可证。服务器报告新许可证后，此警告会自动清除。"
+    },
+    "license_expired": {
+      "title": "{host} 上的 Veeam 许可证已到期",
+      "description": "**{host}** 上的 Veeam Backup & Replication 许可证已于 {date} 到期。备份作业已停止处理新数据，或将在您的许可证类型允许的宽限期结束后停止。\n\n请在 Veeam Backup & Replication 控制台中安装续订的许可证。服务器报告新许可证后，此警告会自动清除。"
     }
   },
   "services": {

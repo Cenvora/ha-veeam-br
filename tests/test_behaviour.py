@@ -7,6 +7,7 @@ lifecycle are the real ones — and answers each operation from a table the test
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
@@ -24,6 +25,8 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE  # noqa: 
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.exceptions import HomeAssistantError  # noqa: E402
 from homeassistant.helpers import device_registry as dr, entity_registry as er  # noqa: E402
+from homeassistant.helpers import issue_registry as ir  # noqa: E402
+from homeassistant.util import dt as dt_util  # noqa: E402
 from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
 from veeam_br.exceptions import VeeamAuthenticationError, VeeamSessionError  # noqa: E402
 
@@ -616,3 +619,66 @@ async def test_reconfigure_moves_the_unique_id(hass: HomeAssistant, server) -> N
     assert result["reason"] == "reconfigure_successful"
     assert entry.unique_id == f"{HOST}:443"
     assert entry.data["port"] == 443
+
+
+# ---------------------------------------------------------------------------
+# License expiration
+# ---------------------------------------------------------------------------
+
+LICENSE = ("license_", "get_installed_license")
+
+
+def expire_license(server: FakeServer, expiration: datetime) -> None:
+    server.responses[LICENSE].expiration_date = expiration
+
+
+async def test_license_expiration_repair_follows_each_poll(hass: HomeAssistant, server) -> None:
+    expire_license(server, dt_util.utcnow() + timedelta(days=10))
+    entry = make_entry()
+    await setup(hass, entry)
+    issues = ir.async_get(hass)
+    expiring = issues.async_get_issue(DOMAIN, f"license_expiring_{entry.entry_id}")
+    assert expiring is not None
+    assert expiring.severity == ir.IssueSeverity.WARNING
+    assert expiring.translation_placeholders["days"] in {"9", "10"}
+
+    # Expired is its own issue, so dismissing the early warning does not hide it
+    expire_license(server, datetime(2020, 1, 1, tzinfo=timezone.utc))
+    await refresh(hass, entry)
+    assert issues.async_get_issue(DOMAIN, f"license_expiring_{entry.entry_id}") is None
+    expired = issues.async_get_issue(DOMAIN, f"license_expired_{entry.entry_id}")
+    assert expired.severity == ir.IssueSeverity.ERROR
+    assert expired.translation_placeholders["date"] == "2020-01-01"
+
+    # A poll that cannot read the license leaves the issue alone
+    license_answer = server.responses[LICENSE]
+    server.responses[LICENSE] = error(403)
+    await refresh(hass, entry)
+    assert issues.async_get_issue(DOMAIN, f"license_expired_{entry.entry_id}") is not None
+
+    # Renewed: cleared on the next poll
+    server.responses[LICENSE] = license_answer
+    expire_license(server, datetime(2099, 1, 1, tzinfo=timezone.utc))
+    await refresh(hass, entry)
+    assert issues.async_get_issue(DOMAIN, f"license_expired_{entry.entry_id}") is None
+
+
+async def test_a_license_without_an_expiration_date_raises_nothing(
+    hass: HomeAssistant, server
+) -> None:
+    entry = make_entry()
+    await setup(hass, entry)
+    issues = ir.async_get(hass)
+    for state in ("license_expiring", "license_expired"):
+        assert issues.async_get_issue(DOMAIN, f"{state}_{entry.entry_id}") is None
+
+
+async def test_license_expiration_repair_is_cleared_on_removal(hass: HomeAssistant, server) -> None:
+    expire_license(server, datetime(2020, 1, 1, tzinfo=timezone.utc))
+    entry = make_entry()
+    await setup(hass, entry)
+    issue_id = f"license_expired_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None

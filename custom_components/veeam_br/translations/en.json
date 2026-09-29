@@ -314,6 +314,14 @@
     "unsupported_license": {
       "title": "Unsupported Veeam license on {host}",
       "description": "The Veeam Backup & Replication server at **{host}** reports the license **{license}**.\n\nVeeam Community Edition, and servers with no license installed, are not supported by this integration: entitlements differ and some REST API endpoints answer differently or not at all, so entities may be missing or unreliable.\n\nThe integration keeps running — nothing is blocked. If you hit problems, please include this license edition in your bug report. Install a supported license, or remove the integration, to clear this warning."
+    },
+    "license_expiring": {
+      "title": "Veeam license on {host} expires soon",
+      "description": "The Veeam Backup & Replication license on **{host}** expires on {date}, in {days} days. Once it expires, backup jobs stop processing new data, after any grace period your license type allows.\n\nInstall a renewed license in the Veeam Backup & Replication console. This warning clears on its own once the new license is reported."
+    },
+    "license_expired": {
+      "title": "Veeam license on {host} has expired",
+      "description": "The Veeam Backup & Replication license on **{host}** expired on {date}. Backup jobs have stopped processing new data, or will once any grace period your license type allows has ended.\n\nInstall a renewed license in the Veeam Backup & Replication console. This warning clears on its own once the new license is reported."
     }
   },
   "services": {

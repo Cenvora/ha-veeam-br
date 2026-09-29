@@ -314,6 +314,14 @@
     "unsupported_license": {
       "title": "Licencia de Veeam no compatible en {host}",
       "description": "El servidor de Veeam Backup & Replication **{host}** informa la licencia **{license}**.\n\nVeeam Community Edition y los servidores sin licencia instalada no son compatibles con esta integración: los derechos son distintos y algunos endpoints de la API REST responden de otra forma o no responden, por lo que pueden faltar entidades o no ser fiables.\n\nLa integración sigue funcionando: no se bloquea nada. Si encuentras problemas, incluye esta edición de licencia en tu informe de error. Instala una licencia compatible, o elimina la integración, para quitar este aviso."
+    },
+    "license_expiring": {
+      "title": "La licencia de Veeam en {host} caduca pronto",
+      "description": "La licencia de Veeam Backup & Replication en **{host}** caduca el {date}, dentro de {days} días. Cuando caduque, los trabajos de copia de seguridad dejarán de procesar datos nuevos, una vez terminado el período de gracia que permita tu tipo de licencia.\n\nInstala una licencia renovada en la consola de Veeam Backup & Replication. Este aviso desaparece por sí solo en cuanto se notifique la nueva licencia."
+    },
+    "license_expired": {
+      "title": "La licencia de Veeam en {host} ha caducado",
+      "description": "La licencia de Veeam Backup & Replication en **{host}** caducó el {date}. Los trabajos de copia de seguridad han dejado de procesar datos nuevos, o lo harán cuando termine el período de gracia que permita tu tipo de licencia.\n\nInstala una licencia renovada en la consola de Veeam Backup & Replication. Este aviso desaparece por sí solo en cuanto se notifique la nueva licencia."
     }
   },
   "services": {

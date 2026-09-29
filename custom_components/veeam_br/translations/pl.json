@@ -314,6 +314,14 @@
     "unsupported_license": {
       "title": "Nieobsługiwana licencja Veeam na {host}",
       "description": "Serwer Veeam Backup & Replication **{host}** zgłasza licencję **{license}**.\n\nVeeam Community Edition oraz serwery bez zainstalowanej licencji nie są obsługiwane przez tę integrację: uprawnienia są inne, a niektóre punkty końcowe REST API odpowiadają inaczej lub wcale, więc encji może brakować lub mogą być niewiarygodne.\n\nIntegracja nadal działa — nic nie jest blokowane. Jeśli napotkasz problemy, podaj tę edycję licencji w zgłoszeniu błędu. Zainstaluj obsługiwaną licencję lub usuń integrację, aby usunąć to ostrzeżenie."
+    },
+    "license_expiring": {
+      "title": "Licencja Veeam na {host} wkrótce wygaśnie",
+      "description": "Licencja Veeam Backup & Replication na **{host}** wygasa {date}, za {days} dni. Po wygaśnięciu zadania kopii zapasowych przestaną przetwarzać nowe dane, gdy skończy się ewentualny okres karencji przewidziany dla Twojego typu licencji.\n\nZainstaluj odnowioną licencję w konsoli Veeam Backup & Replication. To ostrzeżenie zniknie samo, gdy serwer zgłosi nową licencję."
+    },
+    "license_expired": {
+      "title": "Licencja Veeam na {host} wygasła",
+      "description": "Licencja Veeam Backup & Replication na **{host}** wygasła {date}. Zadania kopii zapasowych przestały przetwarzać nowe dane lub przestaną, gdy skończy się ewentualny okres karencji przewidziany dla Twojego typu licencji.\n\nZainstaluj odnowioną licencję w konsoli Veeam Backup & Replication. To ostrzeżenie zniknie samo, gdy serwer zgłosi nową licencję."
     }
   },
   "services": {

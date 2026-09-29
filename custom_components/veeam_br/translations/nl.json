@@ -314,6 +314,14 @@
     "unsupported_license": {
       "title": "Niet-ondersteunde Veeam-licentie op {host}",
       "description": "De Veeam Backup & Replication-server **{host}** meldt de licentie **{license}**.\n\nVeeam Community Edition en servers zonder geïnstalleerde licentie worden niet ondersteund door deze integratie: de rechten verschillen en sommige REST API-eindpunten antwoorden anders of helemaal niet, waardoor entiteiten kunnen ontbreken of onbetrouwbaar zijn.\n\nDe integratie blijft werken — er wordt niets geblokkeerd. Vermeld bij problemen deze licentie-editie in je bugmelding. Installeer een ondersteunde licentie, of verwijder de integratie, om deze waarschuwing te laten verdwijnen."
+    },
+    "license_expiring": {
+      "title": "Veeam-licentie op {host} verloopt binnenkort",
+      "description": "De Veeam Backup & Replication-licentie op **{host}** verloopt op {date}, over {days} dagen. Na het verlopen verwerken back-uptaken geen nieuwe gegevens meer, zodra een eventuele respijtperiode van je licentietype voorbij is.\n\nInstalleer een vernieuwde licentie in de Veeam Backup & Replication-console. Deze waarschuwing verdwijnt vanzelf zodra de nieuwe licentie wordt gemeld."
+    },
+    "license_expired": {
+      "title": "Veeam-licentie op {host} is verlopen",
+      "description": "De Veeam Backup & Replication-licentie op **{host}** is verlopen op {date}. Back-uptaken verwerken geen nieuwe gegevens meer, of stoppen daarmee zodra een eventuele respijtperiode van je licentietype voorbij is.\n\nInstalleer een vernieuwde licentie in de Veeam Backup & Replication-console. Deze waarschuwing verdwijnt vanzelf zodra de nieuwe licentie wordt gemeld."
     }
   },
   "services": {
