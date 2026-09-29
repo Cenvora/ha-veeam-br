@@ -7,7 +7,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate-python:
@@ -29,17 +29,10 @@ jobs:
           pip install -r requirements_test.txt
 
       - name: Format check with Ruff
-        run: ruff format custom_components/
+        run: ruff format --check custom_components/
 
       - name: Lint with Ruff
-        run: ruff check --fix custom_components/ || true
-
-      - name: Commit Ruff fixes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add custom_components/
-          git diff --cached --quiet || (git commit -m "style: apply Ruff formatting and fixes" && git push)
+        run: ruff check custom_components/
 
       - name: Type check with ty
         run: ty check custom_components/
