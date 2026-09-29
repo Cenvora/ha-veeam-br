@@ -34,7 +34,7 @@ This project is an independent, open source project. It is not affiliated with, 
 ### Supported API Versions
 
 The **API Version** option selects the REST API revision used against your server. It
-defaults to **auto**, which probes the server and picks the newest revision it serves, so you
+defaults to **Automatic**, which probes the server and picks the newest revision it serves, so you
 do not need to know your VBR build. Pick a specific revision to pin it instead.
 
 Detection works by asking the server which Swagger documents it publishes — Veeam's REST API
@@ -44,14 +44,14 @@ is that the caller chooses one. If the Swagger endpoints are unreachable or disa
 detection is skipped and the newest supported revision is used; select a revision manually if
 that is wrong for your server.
 
-*auto* is stored as a standing preference, not resolved away: it is re-evaluated on every
+*Automatic* is stored as a standing preference, not resolved away: it is re-evaluated on every
 startup and reload. Upgrading VBR, or updating `veeam-br` to a release that adds a newer
 revision, moves the entry onto the newer revision by itself — no reconfiguration needed. Pick a
 specific revision instead if you want it pinned.
 
 > [!NOTE]
 > A newer revision can rename enum values and add fields. That is the trade for automatic
-> upgrades: if a revision ever changes something this integration reads, *auto* will adopt it on
+> upgrades: if a revision ever changes something this integration reads, *Automatic* will adopt it on
 > the next restart. Pin a version if you would rather adopt those changes deliberately. The
 > resolved revision is logged at startup and shown in the diagnostics download.
 
@@ -83,8 +83,8 @@ Have [HACS](https://hacs.xyz/) installed, this will allow you to update easily.
 
 <details><summary>Manual Install</summary>
 
-* Copy the `ha-veeam-br`  folder from [latest release](https://github.com/Cenvora/ha-veeam-br/releases/latest) to the [`custom_components` folder](https://developers.home-assistant.io/docs/creating_integration_file_structure/#where-home-assistant-looks-for-integrations) in your config directory.
-* Restart the Home Assistant.
+* Copy the `custom_components/veeam_br` folder from the [latest release](https://github.com/Cenvora/ha-veeam-br/releases/latest) to the [`custom_components` folder](https://developers.home-assistant.io/docs/creating_integration_file_structure/#where-home-assistant-looks-for-integrations) in your config directory.
+* Restart Home Assistant.
 </details>
 
 ## Configuration
@@ -103,7 +103,7 @@ The integration supports the following configuration options:
 #### Optional Parameters
 - **Verify SSL**: Enable/disable SSL certificate verification (default: enabled)
   - Disable only if using self-signed certificates in a trusted environment
-- **API Version**: REST API revision to use. Defaults to *auto*, which detects the newest
+- **API Version**: REST API revision to use. Defaults to *Automatic*, which detects the newest
   revision the server serves (configured via integration options)
 
 ### Via UI (Recommended)
@@ -700,6 +700,10 @@ Nothing is blocked: if the integration works for you on Community Edition, it ke
 The warning exists so that unexplained behaviour has an obvious first suspect, and it clears
 itself once the server reports a supported license.
 
+A second repair appears when the license is within 30 days of expiring (a warning), and again
+once it has expired (an error). Both are checked on every poll and clear on their own once the
+server reports a renewed license.
+
 If you report a problem, please include the license edition — the diagnostics download
 (⋮ → *Download diagnostics*) contains it, along with the API version and library version, and
 no credentials.
@@ -741,7 +745,7 @@ attribute, so automations that need to match exactly have something stable:
 
 - **Veeam Community Edition / unlicensed servers**: Not supported. The integration detects
   this and raises a repair warning, but keeps running — see [Licensing](#licensing).
-- **API Version Compatibility**: Requires Veeam B&R 12.1 or newer
+- **API Version Compatibility**: Requires Veeam B&R 12.3 or newer
 - **Stale Devices**: A job or repository deleted in Veeam is removed automatically on the next
   poll. If the server reports none of a kind at all — which is indistinguishable from a failed
   fetch — nothing is pruned automatically; use the device's **Delete** button instead.
@@ -817,21 +821,17 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 To set up the development environment:
 
 ```bash
-# Install development dependencies
-pip install black isort flake8 mypy pre-commit
-
-# Install pre-commit hooks (optional but recommended)
-pre-commit install
+# Install development and test dependencies
+pip install ruff ty -r requirements_test.txt
 ```
 
 ### Code Quality
 
 This project uses automated testing and formatting:
 
-- **Black**: Code formatting (line length: 100)
-- **isort**: Import sorting
-- **flake8**: Linting
-- **mypy**: Type checking
+- **Ruff**: Code formatting and linting (line length: 100)
+- **ty**: Type checking
+- **pytest**: Tests, using `pytest-homeassistant-custom-component`
 - **HACS Action**: HACS integration validation
 - **Hassfest**: Home Assistant manifest validation
 
@@ -839,14 +839,16 @@ Run formatting and checks locally:
 
 ```bash
 # Format code
-black custom_components/
-isort custom_components/
+ruff format custom_components/
 
 # Run linting
-flake8 custom_components/
+ruff check custom_components/
 
 # Type checking
-mypy custom_components/ --ignore-missing-imports
+ty check custom_components/
+
+# Run tests
+pytest
 
 # Validate JSON
 python -m json.tool custom_components/veeam_br/manifest.json
@@ -855,12 +857,12 @@ python -m json.tool custom_components/veeam_br/manifest.json
 ### CI/CD
 
 All pull requests are automatically validated with:
-- Python code formatting (Black, isort)
-- Linting (flake8)
-- Type checking (mypy)
+- Python code formatting and linting (Ruff)
+- Type checking (ty)
+- Tests (pytest)
 - HACS validation
 - Home Assistant manifest validation (hassfest)
-- JSON schema validation
+- JSON validation
 
 ### Release Process
 
