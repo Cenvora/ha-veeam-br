@@ -7,21 +7,20 @@ body:
       value: |
         Thanks for taking the time to report this.
 
-        Most reports come down to a handful of things: which Veeam build you run, which REST
-        API revision the integration is using, and what your license entitles. The fields
-        below ask for exactly those, so please fill them in — it is usually the difference
-        between a same-day fix and a long back-and-forth.
+        Most reports come down to a handful of things: which Veeam Backup & Replication build you run,
+        which REST API version the integration is using, and what your license entitles. The
+        fields below ask for exactly those, so please fill them in — it is usually the
+        difference between a same-day fix and a long back-and-forth.
 
         **The fastest thing you can attach is a diagnostics download**: Settings → Devices &
-        Services → Veeam Backup & Replication → ⋮ → *Download diagnostics*. It contains the
-        API version, the veeam-br version, your license edition and server build, with no
-        credentials.
+        Services → Veeam Backup & Replication → ⋮ → *Download diagnostics*. It contains the API version and
+        your license and server details, with no credentials.
 
   - type: textarea
     id: what-happened
     attributes:
       label: What happened?
-      description: What you expected, and what happened instead.
+      description: "What you expected, and what happened instead."
     validations:
       required: true
 
@@ -30,35 +29,35 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. Add the integration against a 13.1 server
+        1. Add the integration
         2. …
     validations:
       required: false
 
   - type: input
-    id: vbr-version
+    id: product-version
     attributes:
       label: Veeam Backup & Replication version
-      description: Full build number, e.g. 13.1.0.411. Help → About in the VBR console.
+      description: "Full build number, e.g. 13.1.0.411. Help → About in the VBR console."
       placeholder: "13.1.0.411"
     validations:
       required: true
 
   - type: dropdown
-    id: license-edition
+    id: license
     attributes:
-      label: Veeam license edition
+      label: Veeam license type
       description: |
-        License → shown in the VBR console, or in the integration's License device.
-        Community Edition and unlicensed servers are not supported — the integration raises a
-        repair warning for those — but please still report what you see.
+        Shown in the VBR console, or on the integration's License device.
+        Community Edition and unlicensed servers are not supported (the integration raises a
+        repair warning for those), but please still report what you see.
       options:
-        - Enterprise Plus
-        - Enterprise
-        - Standard
-        - Community (free)
-        - No license installed
-        - Other / not sure
+        - "Enterprise Plus"
+        - "Enterprise"
+        - "Standard"
+        - "Community (free)"
+        - "No license installed"
+        - "Other / not sure"
     validations:
       required: true
 
@@ -67,15 +66,15 @@ body:
     attributes:
       label: Selected API version
       description: |
-        Settings → Devices & Services → Veeam Backup & Replication → Configure. If you left it
-        on *auto*, pick the revision shown in diagnostics.
+        Settings → Devices & Services → Veeam Backup & Replication → Configure. If you left it on
+        *Automatic*, pick the version shown in diagnostics.
       options:
-        - "auto (detected)"
+        - "Automatic (detected)"
         - "1.3-rev2"
         - "1.3-rev1"
         - "1.3-rev0"
         - "1.2-rev1"
-        - Not sure
+        - "Not sure"
     validations:
       required: true
 
@@ -83,17 +82,15 @@ body:
     id: integration-version
     attributes:
       label: Integration version
-      description: HACS, or the `version` field in `manifest.json`.
-      placeholder: "0.5.0b1"
+      description: "HACS, or the `version` field in `manifest.json`."
     validations:
       required: true
 
   - type: input
-    id: veeam-br-version
+    id: sdk-version
     attributes:
       label: veeam-br library version
-      description: From the diagnostics download, or `pip show veeam-br`.
-      placeholder: "0.4.0"
+      description: "From `pip show veeam-br`, if you know it."
     validations:
       required: false
 
@@ -101,7 +98,7 @@ body:
     id: ha-version
     attributes:
       label: Home Assistant version
-      placeholder: "2026.8.1"
+      placeholder: "2026.9.4"
     validations:
       required: true
 
@@ -110,11 +107,11 @@ body:
     attributes:
       label: Home Assistant installation type
       options:
-        - Home Assistant OS
-        - Home Assistant Supervised
-        - Home Assistant Container
-        - Home Assistant Core (venv)
-        - Other
+        - "Home Assistant OS"
+        - "Home Assistant Supervised"
+        - "Home Assistant Container"
+        - "Home Assistant Core (venv)"
+        - "Other"
     validations:
       required: false
 
@@ -141,7 +138,7 @@ body:
     id: diagnostics
     attributes:
       label: Diagnostics
-      description: Attach or paste the diagnostics download. It contains no credentials.
+      description: "Attach or paste the diagnostics download. It contains no credentials."
       render: json
     validations:
       required: false
