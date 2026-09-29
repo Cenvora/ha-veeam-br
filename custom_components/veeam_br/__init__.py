@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta, timezone
 import importlib
 import logging
 import sys
+from datetime import timedelta, timezone
 from typing import Any
 
+import httpx
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.ssl import get_default_context, get_default_no_verify_context
-import httpx
+
 from veeam_br.client import VeeamClient
 from veeam_br.exceptions import VeeamAuthenticationError, VeeamSessionError
 
@@ -71,6 +73,8 @@ from .security_analyzer import (
     ViolationTracker,
     parse_best_practice,
     parse_last_run,
+)
+from .security_analyzer import (
     summarize as summarize_security_analyzer,
 )
 from .services import async_setup_services
@@ -657,8 +661,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Falling back to the default here would pin the entry to a revision chosen while
             # the server was down; retrying is the only answer that detects the right one
             raise ConfigEntryNotReady(
-                f"Could not reach {host}:{port} to detect its API version: "
-                f"{describe_error(err)}"
+                f"Could not reach {host}:{port} to detect its API version: {describe_error(err)}"
             ) from err
         _LOGGER.info("API version is set to auto; using %s for %s", api_version, host)
     else:
