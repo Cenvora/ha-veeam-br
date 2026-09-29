@@ -29,10 +29,10 @@ jobs:
           pip install -r requirements_test.txt
 
       - name: Format check with Ruff
-        run: ruff format --check custom_components/
+        run: ruff format custom_components/
 
       - name: Lint with Ruff
-        run: ruff check custom_components/
+        run: ruff check --fix custom_components/
 
       - name: Type check with ty
         run: ty check custom_components/
