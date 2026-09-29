@@ -1212,11 +1212,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             if has_server
                             else None
                         ),
-                        "cache_folder": (
-                            _license_text(cache, "cache_folder", default="")
-                            if has_cache
-                            else None
-                        ),
+                        "cache_folder": _license_text(cache, "cache_folder", default="") if has_cache else None,
                         "cache_size": _number_or_none(cache, "cache_size") if has_cache else None,
                         "cache_size_unit": (
                             get_enum_value(getattr(cache, "cache_size_unit", None), "Unknown")
