@@ -57,6 +57,8 @@ def reported_extent_ids(data: dict[str, Any] | None) -> set[tuple[str, str]] | N
     """(sobr_id, extent_id) pairs reported this cycle, or None if that cannot be trusted."""
     if data is None:
         return None
+    if data is None:
+        return None
     sobr_ids = reported_ids(data, "sobrs")
     if sobr_ids is None:
         return None
