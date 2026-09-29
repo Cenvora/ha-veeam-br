@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -14,8 +16,6 @@ from .licensing import unsupported_license_reason
 def _veeam_br_version() -> str:
     """Version of the installed veeam-br library, or why it could not be read."""
     try:
-        from importlib.metadata import PackageNotFoundError, version
-
         return version("veeam-br")
     except PackageNotFoundError:
         return "not installed"

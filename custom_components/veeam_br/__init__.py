@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta, timezone
 import importlib
 import logging
 import sys
+from datetime import timedelta, timezone
 from typing import Any
 
+import httpx
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 from homeassistant.util.ssl import get_default_context, get_default_no_verify_context
-import httpx
+
 from veeam_br.client import VeeamClient
 from veeam_br.exceptions import VeeamAuthenticationError, VeeamSessionError
 
@@ -71,6 +73,8 @@ from .security_analyzer import (
     ViolationTracker,
     parse_best_practice,
     parse_last_run,
+)
+from .security_analyzer import (
     summarize as summarize_security_analyzer,
 )
 from .services import async_setup_services
@@ -337,7 +341,7 @@ def _license_instance_usage(license_data) -> dict:
     used = _number_or_none(summary, "used_instances_number")
 
     usage = {
-        "package": _license_text(summary, "package", default=None),
+        "package": _license_text(summary, "package", default=""),
         "instances_licensed": licensed,
         "instances_used": used,
         "instances_new": _number_or_none(summary, "new_instances_number"),
@@ -350,7 +354,7 @@ def _license_instance_usage(license_data) -> dict:
     # The per-type breakdown is small and stable. The full workload list is not — a large
     # estate has thousands of entries, which have no business in a state attribute.
     objects = getattr(summary, "objects", None)
-    if not _is_unset(objects):
+    if isinstance(objects, list):
         usage["instance_objects"] = [
             {
                 "type": _license_text(item, "type_", default="Unknown"),
@@ -361,7 +365,7 @@ def _license_instance_usage(license_data) -> dict:
         ]
 
     workload = getattr(summary, "workload", None)
-    if not _is_unset(workload):
+    if isinstance(workload, list):
         usage["instance_workload_count"] = len(workload)
 
     return usage
@@ -657,8 +661,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Falling back to the default here would pin the entry to a revision chosen while
             # the server was down; retrying is the only answer that detects the right one
             raise ConfigEntryNotReady(
-                f"Could not reach {host}:{port} to detect its API version: "
-                f"{describe_error(err)}"
+                f"Could not reach {host}:{port} to detect its API version: {describe_error(err)}"
             ) from err
         _LOGGER.info("API version is set to auto; using %s for %s", api_version, host)
     else:
@@ -1120,7 +1123,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Successfully parsed SOBR: %s (id: %s, extents: %d)",
                     sobr_dict.get("name"),
                     sobr_dict.get("id"),
-                    len(sobr_dict.get("extents", [])),
+                    len(sobr_dict.get("extents") or []),
                 )
             except (ValueError, KeyError, AttributeError, TypeError) as err:
                 _LOGGER.warning(
@@ -1210,9 +1213,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             else None
                         ),
                         "cache_folder": (
-                            _license_text(cache, "cache_folder", default=None)
-                            if has_cache
-                            else None
+                            _license_text(cache, "cache_folder", default="") if has_cache else None
                         ),
                         "cache_size": _number_or_none(cache, "cache_size") if has_cache else None,
                         "cache_size_unit": (
@@ -1355,7 +1356,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"move/copy sessions endpoint answered {_describe_response(result)}"
             )
 
-        job_names = {job["id"]: job.get("name") for job in jobs if job.get("id")}
+        job_names: dict[str, str | None] = {
+            job["id"]: job.get("name") for job in jobs if job.get("id")
+        }
         sessions = []
         for session in result:
             try:

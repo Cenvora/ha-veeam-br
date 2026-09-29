@@ -13,13 +13,14 @@ async_remove_config_entry_device allows once the server stops reporting it.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 import logging
+from collections.abc import Iterable
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .const import DOMAIN
 
@@ -54,15 +55,19 @@ def reported_ids(data: dict[str, Any] | None, key: str) -> set[str] | None:
 
 def reported_extent_ids(data: dict[str, Any] | None) -> set[tuple[str, str]] | None:
     """(sobr_id, extent_id) pairs reported this cycle, or None if that cannot be trusted."""
+    if data is None:
+        return None
+    if data is None:
+        return None
     sobr_ids = reported_ids(data, "sobrs")
     if sobr_ids is None:
         return None
     return {
         (sobr["id"], extent["id"])
         for sobr in data.get("sobrs") or []
-        if sobr.get("id")
+        if isinstance(sobr, dict) and sobr.get("id")
         for extent in sobr.get("extents") or []
-        if extent.get("id")
+        if isinstance(extent, dict) and extent.get("id")
     }
 
 
