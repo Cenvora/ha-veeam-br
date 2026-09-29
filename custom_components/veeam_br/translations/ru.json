@@ -308,6 +308,11 @@
         "forget_failed": "Отсоединить неудачные",
         "stop_and_undo": "Остановить и отменить"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Автоматически"
+      }
     }
   },
   "issues": {

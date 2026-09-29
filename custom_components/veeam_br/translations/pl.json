@@ -308,6 +308,11 @@
         "forget_failed": "Odłącz nieudane",
         "stop_and_undo": "Zatrzymaj i cofnij"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Automatycznie"
+      }
     }
   },
   "issues": {

@@ -271,12 +271,24 @@ def test_auto_sentinel_is_not_a_real_api_version():
     assert const.AUTO_API_VERSION != const.DEFAULT_API_VERSION
 
 
-def test_auto_option_is_explained_in_strings():
-    """A bare "auto" in a dropdown needs a sentence saying what it does."""
+def test_auto_option_is_labelled_and_explained_in_strings():
+    """The dropdown shows "Automatic", not the raw sentinel, and says what it does."""
     for name in ("strings.json", "translations/en.json"):
         data = json.loads((COMPONENT / name).read_text(encoding="utf-8"))
+        assert data["selector"]["api_version"]["options"]["auto"] == "Automatic"
         description = data["config"]["step"]["user"]["data_description"]["api_version"]
-        assert "auto" in description.lower()
+        assert "Automatic" in description
+    for path in (COMPONENT / "translations").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        assert data["selector"]["api_version"]["options"]["auto"], path.name
+
+
+def test_every_api_version_dropdown_is_translated():
+    """Without the translation key a dropdown shows the raw "auto"."""
+    content = (COMPONENT / "config_flow.py").read_text(encoding="utf-8")
+    dropdowns = content.count("options=api_version_options")
+    assert dropdowns >= 2, "setup and options each offer the API version"
+    assert content.count("translation_key=CONF_API_VERSION") == dropdowns
 
 
 # ---------------------------------------------------------------------------

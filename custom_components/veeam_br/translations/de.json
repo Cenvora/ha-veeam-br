@@ -308,6 +308,11 @@
         "forget_failed": "Fehlgeschlagene trennen",
         "stop_and_undo": "Stoppen und rückgängig machen"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Automatisch"
+      }
     }
   },
   "issues": {
