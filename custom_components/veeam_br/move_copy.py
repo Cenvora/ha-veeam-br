@@ -42,7 +42,7 @@ SESSIONS_LISTED = 25
 
 def parse_session(
     session: Any,
-    job_names: dict[str, str],
+    job_names: dict[str, str | None],
     get_enum_value: Callable[..., Any],
     get_uuid_value: Callable[[Any], str | None],
     get_datetime_value: Callable[[Any], Any],
