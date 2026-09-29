@@ -105,11 +105,6 @@ async def async_setup_entry(
                 )
                 added_job_ids.add(job_id)
 
-                        VeeamJobLastResultSensor(coordinator, entry, job),
-                    ]
-                )
-                added_job_ids.add(job_id)
-
         # ---- REPOSITORY SENSORS (dynamic) ----
         # Each repository becomes a device with multiple sensors.
         # Repository data comes from repositories API, only create if available
