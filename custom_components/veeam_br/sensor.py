@@ -631,7 +631,9 @@ class VeeamServerBaseSensor(CoordinatorEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Stale server details from before a failed fetch are not shown as current."""
-        return CoordinatorEntity.available.fget(self) and endpoint_ok(self.coordinator.data, "server_info")
+        return CoordinatorEntity.available.fget(self) and endpoint_ok(
+            self.coordinator.data, "server_info"
+        )
 
     @property
     def device_info(self):
