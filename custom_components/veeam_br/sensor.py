@@ -1713,6 +1713,7 @@ class VeeamWanAcceleratorCacheSensor(VeeamWanAcceleratorMixin, CoordinatorEntity
 class VeeamSecurityMixin:
     """Shared by the Security device's entities; ``endpoint`` is the data key each reads."""
 
+    coordinator: Any
     endpoint = "malware_events"
 
     def __init__(self, coordinator, config_entry):
