@@ -341,7 +341,7 @@ def _license_instance_usage(license_data) -> dict:
     used = _number_or_none(summary, "used_instances_number")
 
     usage = {
-        "package": _license_text(summary, "package", default=None),
+        "package": _license_text(summary, "package", default=""),
         "instances_licensed": licensed,
         "instances_used": used,
         "instances_new": _number_or_none(summary, "new_instances_number"),
@@ -354,7 +354,7 @@ def _license_instance_usage(license_data) -> dict:
     # The per-type breakdown is small and stable. The full workload list is not — a large
     # estate has thousands of entries, which have no business in a state attribute.
     objects = getattr(summary, "objects", None)
-    if not _is_unset(objects):
+    if isinstance(objects, list):
         usage["instance_objects"] = [
             {
                 "type": _license_text(item, "type_", default="Unknown"),
@@ -365,7 +365,7 @@ def _license_instance_usage(license_data) -> dict:
         ]
 
     workload = getattr(summary, "workload", None)
-    if not _is_unset(workload):
+    if isinstance(workload, list):
         usage["instance_workload_count"] = len(workload)
 
     return usage
@@ -1123,7 +1123,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "Successfully parsed SOBR: %s (id: %s, extents: %d)",
                     sobr_dict.get("name"),
                     sobr_dict.get("id"),
-                    len(sobr_dict.get("extents", [])),
+                    len(sobr_dict.get("extents") or []),
                 )
             except (ValueError, KeyError, AttributeError, TypeError) as err:
                 _LOGGER.warning(
@@ -1213,7 +1213,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             else None
                         ),
                         "cache_folder": (
-                            _license_text(cache, "cache_folder", default=None)
+                            _license_text(cache, "cache_folder", default="")
                             if has_cache
                             else None
                         ),
@@ -1358,7 +1358,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 f"move/copy sessions endpoint answered {_describe_response(result)}"
             )
 
-        job_names = {job["id"]: job.get("name") for job in jobs if job.get("id")}
+        job_names: dict[str, str | None] = {
+            job["id"]: job.get("name") for job in jobs if job.get("id")
+        }
         sessions = []
         for session in result:
             try:
