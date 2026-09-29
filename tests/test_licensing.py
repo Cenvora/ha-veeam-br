@@ -6,6 +6,7 @@ real EInstalledLicenseEdition and EInstalledLicenseType strings the API returns.
 
 import importlib.util
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -173,3 +174,56 @@ def test_diagnostics_report_what_a_bug_report_needs():
     assert '"api_version"' in content, "which API revision was in use"
     assert "_veeam_br_version" in content, "which library version was installed"
     assert "unsupported_reason" in content, "whether the license is a supported one"
+
+
+# ---------------------------------------------------------------------------
+# Expiration
+# ---------------------------------------------------------------------------
+
+NOW = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "expiration,expected",
+    [
+        (NOW - timedelta(days=1), "license_expired"),
+        (NOW, "license_expired"),
+        (NOW + timedelta(days=10), "license_expiring"),
+        (NOW + timedelta(days=30), "license_expiring"),
+        (NOW + timedelta(days=31), None),
+    ],
+)
+def test_expiration_is_graded_by_how_close_the_date_is(expiration, expected):
+    licensing = _load_licensing()
+
+    result = licensing.license_expiration({"expiration_date": expiration}, NOW)
+
+    assert (result[0] if result else None) == expected
+
+
+@pytest.mark.parametrize("value", [None, "", "2026-01-01T00:00:00Z"])
+def test_a_license_without_a_readable_date_never_expires(value):
+    """Perpetual licenses have no expiration date; strings are not parsed dates."""
+    licensing = _load_licensing()
+
+    assert licensing.license_expiration({"expiration_date": value}, NOW) is None
+    assert licensing.license_expiration(None, NOW) is None
+
+
+def test_a_naive_expiration_is_read_as_utc():
+    licensing = _load_licensing()
+
+    state, expiration = licensing.license_expiration({"expiration_date": datetime(2026, 5, 1)}, NOW)
+
+    assert state == "license_expired"
+    assert expiration.tzinfo is timezone.utc
+
+
+def test_expiration_issue_text_exists_in_every_language():
+    """Each translation key is a repair issue, rendered as a raw key if its text is missing."""
+    for path in [COMPONENT / "strings.json", *(COMPONENT / "translations").glob("*.json")]:
+        issues = json.loads(path.read_text(encoding="utf-8"))["issues"]
+        for key in ("license_expiring", "license_expired"):
+            text = issues[key]["title"] + issues[key]["description"]
+            assert "{host}" in text and "{date}" in text, (path.name, key)
+        assert "{days}" in issues["license_expiring"]["description"], path.name

@@ -52,7 +52,14 @@ from .const import (
     warm_feature_cache,
 )
 from .display import describe_error, humanize
-from .licensing import describe_license, unsupported_license_reason
+from .entity import endpoint_ok
+from .licensing import (
+    LICENSE_EXPIRED,
+    LICENSE_EXPIRING,
+    describe_license,
+    license_expiration,
+    unsupported_license_reason,
+)
 from .malware import (
     DETECTION_TIME_ONLY,
     EVENT_MALWARE,
@@ -556,6 +563,46 @@ def _check_license_support(hass: HomeAssistant, entry: ConfigEntry, data: dict |
         translation_placeholders={
             "host": str(entry.data.get(CONF_HOST, "unknown")),
             "license": describe_license(license_info),
+        },
+    )
+
+
+def _expiration_issue_id(entry: ConfigEntry, state: str) -> str:
+    """Repair issue ID for one config entry's expiring or expired license."""
+    return f"{state}_{entry.entry_id}"
+
+
+def _check_license_expiration(hass: HomeAssistant, entry: ConfigEntry, data: dict | None) -> None:
+    """Raise a repair issue while the license is expired or expires soon.
+
+    Expiring and expired are separate issues, so dismissing the early warning does not also
+    hide the expiry itself. Both clear once the server reports a license good for longer. Left
+    as they are when this poll could not read the license, whose data is then last poll's.
+    """
+    if not endpoint_ok(data, "license_info"):
+        return
+
+    now = dt_util.utcnow()
+    result = license_expiration((data or {}).get("license_info"), now)
+    current = result[0] if result else None
+    for state in (LICENSE_EXPIRING, LICENSE_EXPIRED):
+        if state != current:
+            ir.async_delete_issue(hass, DOMAIN, _expiration_issue_id(entry, state))
+    if result is None:
+        return
+
+    state, expiration = result
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        _expiration_issue_id(entry, state),
+        is_fixable=False,
+        severity=ir.IssueSeverity.ERROR if state == LICENSE_EXPIRED else ir.IssueSeverity.WARNING,
+        translation_key=state,
+        translation_placeholders={
+            "host": str(entry.data.get(CONF_HOST, "unknown")),
+            "date": expiration.date().isoformat(),
+            "days": str((expiration - now).days),
         },
     )
 
@@ -1612,6 +1659,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Runs on every setup, so a reload re-reports it and a newly licensed server clears it
     _check_license_support(hass, entry, coordinator.data)
     _warn_about_duplicate_entries(hass, entry)
+    # Every poll, since an unchanged license still moves closer to its expiration date
+    _check_license_expiration(hass, entry, coordinator.data)
+    entry.async_on_unload(
+        coordinator.async_add_listener(
+            lambda: _check_license_expiration(hass, entry, coordinator.data)
+        )
+    )
 
     entry.runtime_data = {
         "coordinator": coordinator,
@@ -1670,3 +1724,5 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     otherwise disappear and come back on each restart.
     """
     ir.async_delete_issue(hass, DOMAIN, _license_issue_id(entry))
+    for state in (LICENSE_EXPIRING, LICENSE_EXPIRED):
+        ir.async_delete_issue(hass, DOMAIN, _expiration_issue_id(entry, state))

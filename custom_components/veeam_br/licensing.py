@@ -14,6 +14,7 @@ Kept free of Home Assistant imports so it can be tested directly.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # EInstalledLicenseEdition value for Community Edition
@@ -26,6 +27,13 @@ UNLICENSED_TYPES = frozenset({"free", "empty"})
 # Reason codes, used as translation placeholders and log detail
 REASON_COMMUNITY_EDITION = "community_edition"
 REASON_NO_LICENSE = "no_license"
+
+# Raise a repair issue this many days before the license expires
+LICENSE_WARNING_DAYS = 30
+
+# Expiration states, also the repair issues' translation keys
+LICENSE_EXPIRING = "license_expiring"
+LICENSE_EXPIRED = "license_expired"
 
 
 def _normalize(value: Any) -> str:
@@ -66,3 +74,24 @@ def describe_license(license_info: dict[str, Any] | None) -> str:
     edition = license_info.get("edition") or "Unknown"
     license_type = license_info.get("type") or "Unknown"
     return f"{edition}/{license_type}"
+
+
+def license_expiration(
+    license_info: dict[str, Any] | None, now: datetime
+) -> tuple[str, datetime] | None:
+    """Whether the license is expired or expires within LICENSE_WARNING_DAYS, and when.
+
+    Returns (LICENSE_EXPIRED or LICENSE_EXPIRING, expiration), or None for a license that is
+    good for longer. A license with no expiration date, such as a perpetual one, never
+    expires, and a date that cannot be read says nothing either way.
+    """
+    expiration = (license_info or {}).get("expiration_date")
+    if not isinstance(expiration, datetime):
+        return None
+    if expiration.tzinfo is None:
+        expiration = expiration.replace(tzinfo=timezone.utc)
+    if expiration <= now:
+        return LICENSE_EXPIRED, expiration
+    if expiration - now <= timedelta(days=LICENSE_WARNING_DAYS):
+        return LICENSE_EXPIRING, expiration
+    return None
