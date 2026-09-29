@@ -399,6 +399,7 @@ class VeeamBRConfigFlow(ConfigFlow, domain=DOMAIN):
                     selector.SelectSelectorConfig(
                         options=api_version_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
+                        translation_key=CONF_API_VERSION,
                     )
                 ),
             }
@@ -467,6 +468,7 @@ class VeeamBROptionsFlow(OptionsFlowWithReload):
                     selector.SelectSelectorConfig(
                         options=api_version_options,
                         mode=selector.SelectSelectorMode.DROPDOWN,
+                        translation_key=CONF_API_VERSION,
                     )
                 ),
             }

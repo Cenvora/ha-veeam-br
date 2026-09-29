@@ -308,6 +308,11 @@
         "forget_failed": "分离失败项",
         "stop_and_undo": "停止并撤消"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "自动"
+      }
     }
   },
   "issues": {

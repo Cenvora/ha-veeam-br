@@ -308,6 +308,11 @@
         "forget_failed": "Desvincular fallidos",
         "stop_and_undo": "Detener y deshacer"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Automático"
+      }
     }
   },
   "issues": {

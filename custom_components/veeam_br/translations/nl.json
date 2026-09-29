@@ -308,6 +308,11 @@
         "forget_failed": "Mislukte loskoppelen",
         "stop_and_undo": "Stoppen en ongedaan maken"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Automatisch"
+      }
     }
   },
   "issues": {

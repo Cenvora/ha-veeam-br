@@ -308,6 +308,11 @@
         "forget_failed": "Scollega non riusciti",
         "stop_and_undo": "Arresta e annulla"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Automatica"
+      }
     }
   },
   "issues": {

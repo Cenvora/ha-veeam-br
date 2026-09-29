@@ -308,6 +308,11 @@
         "forget_failed": "Odpojit neúspěšné",
         "stop_and_undo": "Zastavit a vrátit"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Automaticky"
+      }
     }
   },
   "issues": {

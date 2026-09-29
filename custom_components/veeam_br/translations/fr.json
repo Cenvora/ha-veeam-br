@@ -308,6 +308,11 @@
         "forget_failed": "Détacher les échecs",
         "stop_and_undo": "Arrêter et annuler"
       }
+    },
+    "api_version": {
+      "options": {
+        "auto": "Automatique"
+      }
     }
   },
   "issues": {
