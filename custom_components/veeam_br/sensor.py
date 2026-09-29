@@ -105,8 +105,7 @@ async def async_setup_entry(
                 )
                 added_job_ids.add(job_id)
 
-        # ---- REPOSITORY SENSORS (dynamic) ----
-        # Each repository becomes a device with multiple sensors.
+        # ---- REPOSITORY SENSORS (dynamic) - Each repository becomes a device with multiple sensors ----
         # Repository data comes from repositories API, only create if available
         if check_api_feature_availability(api_version, FEATURE_REPOSITORIES):
             for repository in coordinator.data.get("repositories", []):
@@ -329,8 +328,6 @@ async def async_setup_entry(
 class VeeamLicenseMixin:
     """Mixin providing shared license-related functionality."""
 
-    coordinator: Any
-
     def __init__(self, coordinator, config_entry):
         """Initialize the mixin."""
         self._config_entry = config_entry
@@ -343,7 +340,7 @@ class VeeamLicenseMixin:
     def available(self) -> bool:
         """Stale license data from before a failed fetch is not shown as current."""
         return (
-            CoordinatorEntity.available.fget(self)
+            super().available
             and endpoint_ok(self.coordinator.data, "license_info")
             and self._license_info() is not None
         )
@@ -356,8 +353,6 @@ class VeeamLicenseMixin:
 
 class VeeamRepositoryMixin:
     """Mixin providing shared repository-related functionality."""
-
-    coordinator: Any
 
     def __init__(self, coordinator, config_entry, repository_data):
         """Initialize the mixin."""
@@ -381,9 +376,7 @@ class VeeamRepositoryMixin:
     @property
     def available(self) -> bool:
         """Unavailable, rather than unknown, when there is nothing current to show."""
-        if not CoordinatorEntity.available.fget(self) or not endpoint_ok(
-            self.coordinator.data, "repositories"
-        ):
+        if not super().available or not endpoint_ok(self.coordinator.data, "repositories"):
             return False
         repo = self._repository()
         if repo is None:
@@ -424,7 +417,7 @@ class VeeamJobBaseSensor(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         """Unavailable while the jobs fetch fails or the job is no longer reported."""
         return (
-            CoordinatorEntity.available.fget(self)
+            super().available
             and endpoint_ok(self.coordinator.data, "jobs")
             and self._job() is not None
         )
@@ -631,9 +624,7 @@ class VeeamServerBaseSensor(CoordinatorEntity, SensorEntity):
     @property
     def available(self) -> bool:
         """Stale server details from before a failed fetch are not shown as current."""
-        return CoordinatorEntity.available.fget(self) and endpoint_ok(
-            self.coordinator.data, "server_info"
-        )
+        return super().available and endpoint_ok(self.coordinator.data, "server_info")
 
     @property
     def device_info(self):
@@ -1158,8 +1149,6 @@ class VeeamRepositoryImmutabilityDaysSensor(VeeamRepositoryBaseSensor):
 class VeeamSOBRMixin:
     """Mixin providing shared SOBR-related functionality."""
 
-    coordinator: Any
-
     def __init__(self, coordinator, config_entry, sobr_data):
         """Initialize the mixin."""
         self._config_entry = config_entry
@@ -1179,7 +1168,7 @@ class VeeamSOBRMixin:
     def available(self) -> bool:
         """Unavailable while the SOBR fetch fails or the SOBR is no longer reported."""
         return (
-            CoordinatorEntity.available.fget(self)
+            super().available
             and endpoint_ok(self.coordinator.data, "sobrs")
             and self._sobr() is not None
         )
@@ -1252,8 +1241,6 @@ class VeeamSOBRExtentCountSensor(VeeamSOBRBaseSensor):
 class VeeamHAClusterMixin:
     """Mixin providing shared HA cluster functionality."""
 
-    coordinator: Any
-
     def __init__(self, coordinator, config_entry):
         """Initialize the mixin."""
         self._config_entry = config_entry
@@ -1271,7 +1258,7 @@ class VeeamHAClusterMixin:
     def available(self) -> bool:
         """A cluster that stops being reported should not keep showing stale values."""
         return (
-            CoordinatorEntity.available.fget(self)
+            super().available
             and endpoint_ok(self.coordinator.data, "ha_cluster")
             and self._cluster() is not None
         )
@@ -1355,7 +1342,7 @@ class VeeamHAClusterNodeSensorBase(VeeamHAClusterBaseSensor):
 
     @property
     def available(self) -> bool:
-        return CoordinatorEntity.available.fget(self) and self._node_data() is not None
+        return super().available and self._node_data() is not None
 
 
 class VeeamHAClusterNodeStateSensor(VeeamHAClusterNodeSensorBase):
@@ -1553,8 +1540,6 @@ class VeeamLicenseInstancesUsedPercentSensor(VeeamLicenseBaseSensor):
 class VeeamProxyMixin:
     """Mixin providing shared proxy functionality."""
 
-    coordinator: Any
-
     def __init__(self, coordinator, config_entry, proxy_data):
         """Initialize the mixin."""
         self._config_entry = config_entry
@@ -1574,7 +1559,7 @@ class VeeamProxyMixin:
     def available(self) -> bool:
         """A proxy removed from the server should not keep reporting."""
         return (
-            CoordinatorEntity.available.fget(self)
+            super().available
             and endpoint_ok(self.coordinator.data, "proxies")
             and self._proxy() is not None
         )
@@ -1634,8 +1619,6 @@ class VeeamProxyTypeSensor(VeeamProxyBaseSensor):
 class VeeamWanAcceleratorMixin:
     """Mixin providing shared WAN accelerator functionality."""
 
-    coordinator: Any
-
     def __init__(self, coordinator, config_entry, accelerator_data):
         """Initialize the mixin."""
         self._config_entry = config_entry
@@ -1653,7 +1636,7 @@ class VeeamWanAcceleratorMixin:
     @property
     def available(self) -> bool:
         return (
-            CoordinatorEntity.available.fget(self)
+            super().available
             and endpoint_ok(self.coordinator.data, "wan_accelerators")
             and self._accelerator() is not None
         )
@@ -1713,7 +1696,6 @@ class VeeamWanAcceleratorCacheSensor(VeeamWanAcceleratorMixin, CoordinatorEntity
 class VeeamSecurityMixin:
     """Shared by the Security device's entities; ``endpoint`` is the data key each reads."""
 
-    coordinator: Any
     endpoint = "malware_events"
 
     def __init__(self, coordinator, config_entry):
@@ -1725,7 +1707,7 @@ class VeeamSecurityMixin:
     @property
     def available(self) -> bool:
         return (
-            CoordinatorEntity.available.fget(self)
+            super().available
             and endpoint_ok(self.coordinator.data, self.endpoint)
             and self._security() is not None
         )
