@@ -256,10 +256,9 @@ def test_strict_typing():
     with open(pyproject_path) as f:
         content = f.read()
 
-    assert "strict = true" in content, "pyproject.toml should have mypy strict mode enabled"
-    assert (
-        "disallow_untyped_defs = true" in content
-    ), "pyproject.toml should have disallow_untyped_defs enabled"
+    assert "[tool.ty.environment]" in content, "pyproject.toml should configure ty"
+    assert 'python-version = "3.11"' in content, "pyproject.toml should pin ty's Python version"
+    assert "[tool.ty.rules]" in content, "pyproject.toml should configure ty rules"
 
     # Check py.typed marker exists
     py_typed_path = Path(__file__).parent.parent / "custom_components" / "veeam_br" / "py.typed"
