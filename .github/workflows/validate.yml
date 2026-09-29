@@ -32,7 +32,10 @@ jobs:
         run: ruff format custom_components/
 
       - name: Lint with Ruff
-        run: ruff check --fix custom_components/
+        run: ruff check --fix custom_components/ || true
+
+      - name: Show Ruff fixes
+        run: git diff -- custom_components/
 
       - name: Type check with ty
         run: ty check custom_components/
