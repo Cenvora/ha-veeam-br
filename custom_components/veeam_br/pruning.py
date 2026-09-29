@@ -61,9 +61,9 @@ def reported_extent_ids(data: dict[str, Any] | None) -> set[tuple[str, str]] | N
     return {
         (sobr["id"], extent["id"])
         for sobr in data.get("sobrs") or []
-        if sobr.get("id")
+        if isinstance(sobr, dict) and sobr.get("id")
         for extent in sobr.get("extents") or []
-        if extent.get("id")
+        if isinstance(extent, dict) and extent.get("id")
     }
 
 
